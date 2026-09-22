@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+桌宠素材验收脚本 —— 逐帧量化，不靠肉眼看图。
+
+用法：
+    python3 verify-assets.py                # 验收 assets/pet/
+    python3 verify-assets.py --dir X        # 验收指定目录
+    python3 verify-assets.py --quiet        # 只输出结论
+
+退出码：0 = 通过（可能有 WARN），1 = 有 FAIL
+
+判定思路（重要）：
+  脚底位置不按"绝对 ±5"判 —— 那会因为整体偏移 1px 就误判。
+  真正要防的是**帧间跳动**（切换剪辑时角色上下跳），所以：
+    · FAIL：某接地帧相对「全套接地帧中位数」偏离 > 8px（真的会跳）
+    · WARN：中位数本身离地面线 > 5px（系统性偏移，肉眼不可见，不阻塞）
+"""
+import argparse
+import json
+import math
+import os
+import sys
+
+try:
+    from PIL import Image
+    import numpy as np
+except ImportError:
+    print("需要 Pillow 与 numpy：pip install pillow numpy")
+    sys.exit(2)
+
+# 各剪辑的离地帧（1 基）。不在表里的 = 全程接地。
+AIRBORNE = {
+    'run':     [5, 10],                 # Airborne 相位
+    'jump':    [5, 6, 7, 8, 9],         # 上升 / 顶点 / 下落
+    'drag':    list(range(2, 13)),      # 起吊后全程悬空
+    'success': [4, 5, 6, 7, 8],         # 跳起
+}
+
+SQUASH_CLIPS = {'jump', 'success'}      # 允许变矮（下蹲 / 落地压缩）
+
+TOL_FEET_REL = 8        # 接地帧相对全套中位数的容差
+TOL_FEET_ABS = 5        # 中位数离地面线超过这个值 → WARN
+TOL_CENTER = 8
+TOL_HEIGHT = 14
+TOL_HEIGHT_SQUASH = 60
+TOL_SEAM_RATIO = 1.5
+ALPHA_TH = 128
+WIDTH_MAX = 205
+
+
+def load(path, fw, fh, cols, n):
+    im = Image.open(path).convert("RGBA")
+    a = np.array(im.getchannel("A"))
+    rgb = np.array(im).astype(np.int16)
+    return [((a[r*fh:(r+1)*fh, c*fw:(c+1)*fw]), (rgb[r*fh:(r+1)*fh, c*fw:(c+1)*fw]))
+            for r, c in (divmod(i, cols) for i in range(n))]
+
+
+def d1(f1, f2):
+    m = (f1[0] > ALPHA_TH) | (f2[0] > ALPHA_TH)
+    if m.sum() == 0:
+        return 0.0
+    return float(np.abs(f1[1][:, :, :3] - f2[1][:, :, :3]).mean(axis=2)[m].mean())
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                  "assets", "pet"))
+    ap.add_argument("--quiet", action="store_true")
+    args = ap.parse_args()
+
+    root = args.dir
+    mp = os.path.join(root, "manifest.json")
+    if not os.path.exists(mp):
+        print(f"FAIL: 找不到 {mp}")
+        return 1
+    man = json.load(open(mp, encoding="utf-8"))
+    ss = man["spriteSheet"]
+    FW, FH, COLS = ss["frameWidth"], ss["frameHeight"], ss["columns"]
+    GX, GY = ss["anchorX"] * FW, ss["anchorY"] * FH
+    CH = ss.get("characterHeight", 256)
+
+    fails, warns, report = [], [], []
+
+    # ---------- 第一遍：装载 + 量测 ----------
+    data = {}
+    for clip, m in man["clips"].items():
+        p = os.path.join(root, m["file"])
+        if not os.path.exists(p):
+            fails.append(f"{clip}: 缺文件 {m['file']}")
+            continue
+        n = m["frameCount"]
+        im = Image.open(p)
+        if im.size != (COLS * FW, m["rows"] * FH):
+            fails.append(f"{clip}: 尺寸 {im.size} ≠ {COLS*FW}×{m['rows']*FH}")
+        if m["rows"] != math.ceil(n / COLS):
+            fails.append(f"{clip}: rows={m['rows']} ≠ ceil({n}/{COLS})")
+        if im.mode != "RGBA":
+            fails.append(f"{clip}: 模式 {im.mode}，应为 RGBA")
+
+        frames = load(p, FW, FH, COLS, n)
+        arr = np.array(im.convert("RGBA"))
+        air = set(AIRBORNE.get(clip, []))
+        metrics = []
+        for i, fr in enumerate(frames):
+            ys, xs = np.where(fr[0] > ALPHA_TH)
+            if len(xs) == 0:
+                fails.append(f"{clip}#{i+1}: 空帧")
+                metrics.append(None)
+                continue
+            x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
+            metrics.append(dict(
+                feet=int(y1), cx=(x0 + x1) / 2, h=int(y1 - y0 + 1), w=int(x1 - x0 + 1),
+                air=(i + 1) in air, idx=i + 1))
+        # 四角 / 背景
+        for i in range(n):
+            r, c = divmod(i, COLS)
+            cell = arr[r*FH:(r+1)*FH, c*FW:(c+1)*FW, 3]
+            if max(cell[:8, :8].max(), cell[:8, -8:].max(),
+                   cell[-8:, :8].max(), cell[-8:, -8:].max()) > 0:
+                fails.append(f"{clip}#{i+1}: 四角不透明")
+                break
+        bg = arr[arr[:, :, 3] == 0]
+        nbg = len(np.unique(bg[:, :3], axis=0)) if len(bg) else 0
+        if nbg > 1:
+            fails.append(f"{clip}: 透明区有 {nbg} 种颜色 → 背景被画了东西（棋盘格？）")
+        data[clip] = dict(meta=m, frames=frames, metrics=metrics)
+
+    # ---------- 第二遍：相对一致性 ----------
+    all_ground = [mm["feet"] for c in data.values() for mm in c["metrics"]
+                  if mm and not mm["air"]]
+    base = int(np.median(all_ground)) if all_ground else int(GY)
+    if abs(base - GY) > TOL_FEET_ABS:
+        warns.append(f"全套接地帧脚底中位数 {base}，离地面线 {GY:.0f} 偏 {base-GY:+.0f}px"
+                     f"（约 {(base-GY)*0.5:+.1f} CSS px，肉眼不可见，不阻塞）")
+
+    for clip, c in data.items():
+        m, frames, metrics = c["meta"], c["frames"], c["metrics"]
+        n = m["frameCount"]
+        squash = clip in SQUASH_CLIPS
+        hs, ws, airs = [], [], []
+        for mm in metrics:
+            if not mm:
+                continue
+            hs.append(mm["h"]); ws.append(mm["w"])
+            if mm["feet"] > GY + 1:
+                fails.append(f"{clip}#{mm['idx']}: 穿地（脚底 {mm['feet']} > 地面线 {GY:.0f}）")
+            if mm["air"]:
+                airs.append(f"#{mm['idx']}={mm['feet']}")
+                if mm["feet"] >= GY - 2:
+                    fails.append(f"{clip}#{mm['idx']}: 应离地却贴地（脚底 {mm['feet']}）")
+            else:
+                if abs(mm["feet"] - base) > TOL_FEET_REL:
+                    fails.append(f"{clip}#{mm['idx']}: 接地帧脚底 {mm['feet']} 偏离基准 {base}"
+                                 f" 达 {mm['feet']-base:+d}px（会与其它帧/剪辑肉眼可见地跳）")
+            if abs(mm["cx"] - GX) > TOL_CENTER:
+                fails.append(f"{clip}#{mm['idx']}: 水平中心偏 {mm['cx']-GX:+.0f}")
+            tol = TOL_HEIGHT_SQUASH if squash else TOL_HEIGHT
+            if abs(mm["h"] - CH) > tol:
+                warns.append(f"{clip}#{mm['idx']}: 角色高 {mm['h']}（期望 {CH}±{tol}）")
+            if mm["w"] > WIDTH_MAX:
+                fails.append(f"{clip}#{mm['idx']}: 宽 {mm['w']} > {WIDTH_MAX}")
+
+        note = ""
+        if m.get("loop"):
+            ls, le = m["loopStart"], m["loopEnd"]
+            inside = [d1(frames[i], frames[i+1]) for i in range(ls-1, le-1)]
+            seam = d1(frames[le-1], frames[ls-1])
+            mx = max(inside) if inside else 0
+            if seam > mx * TOL_SEAM_RATIO and seam > 1.0:
+                fails.append(f"{clip}: 循环接缝偏大 {seam:.2f}（段内最大 {mx:.2f}）")
+            uniq = 1 + sum(1 for i in range(ls, le) if d1(frames[i-1], frames[i]) > 0.5)
+            total = le - ls + 1
+            note = f"循环 {ls}-{le} 接缝 {seam:.2f} 姿态 {uniq}/{total}"
+            if uniq < total / 3:
+                warns.append(f"{clip}: 循环段只有 {uniq} 个不同姿态（共 {total} 帧）→ 近似二值切换")
+        else:
+            if "idle" in data:
+                i1 = data["idle"]["frames"][0]
+                a0, a1 = d1(frames[0], i1), d1(frames[-1], i1)
+                if a0 > 1.0:
+                    warns.append(f"{clip}: 首帧↔idle#1 差异 {a0:.2f}（一次性剪辑应≈0）")
+                if a1 > 1.0:
+                    warns.append(f"{clip}: 尾帧↔idle#1 差异 {a1:.2f}（一次性剪辑应≈0）")
+                note = f"一次性 首↔idle#1 {a0:.2f} 尾↔idle#1 {a1:.2f}"
+
+        dups = [f"{i+1}={i+2}" for i in range(n-1) if d1(frames[i], frames[i+1]) < 0.01]
+        if len(dups) > max(1, n // 3):
+            warns.append(f"{clip}: 相邻帧完全相同 {len(dups)} 组（{', '.join(dups[:6])}）")
+
+        report.append(f"  {clip:8} {n:>2}帧 {m['fps']:>2}fps 高{min(hs)}-{max(hs)} 宽{max(ws)}  "
+                      f"{'离地: ' + ' '.join(airs) if airs else '全程接地'}")
+        if note:
+            report.append(f"           {note}")
+
+    # ---------- 输出 ----------
+    if not args.quiet:
+        print(f"验收目录: {root}")
+        print(f"画布 {FW}×{FH} | {COLS} 列 | 地面线 y={GY:.0f} | 锚点 x={GX:.0f} | "
+              f"剪辑 {len(man['clips'])} 个 | 接地基准 y={base}")
+        print("=" * 74)
+        for line in report:
+            print(line)
+        print("=" * 74)
+
+    if warns:
+        print(f"WARN {len(warns)} 条（不阻塞）：")
+        for w in warns:
+            print("  ! " + w)
+    if fails:
+        print(f"FAIL {len(fails)} 条：")
+        for f in fails:
+            print("  ✗ " + f)
+        print("\n结论：不通过，需退回制作方")
+        return 1
+    print("结论：通过 ✓" + (f"（{len(warns)} 条 WARN）" if warns else ""))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
