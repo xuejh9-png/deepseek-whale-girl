@@ -19,11 +19,11 @@ html, body {
    Asset 分辨率与渲染尺寸彻底解耦。
    以后要改大小，只动 --pet-char-height 这一个值。 */
 :root {
-  /* 角色本体的屏幕显示高度。目标 96~112 CSS px（Codex Pet 量级）。 */
-  --pet-char-height: 104px;
+  /* 角色本体的屏幕显示高度。目标 120~130 CSS px。 */
+  --pet-char-height: 128px;
   /* 角色在画布中的高度占比 —— 由素材规格决定，见 ASSET_SPEC.md §1 */
-  --pet-char-in-canvas: 0.65;
-  /* 画布宽高比 256 : 320 */
+  --pet-char-in-canvas: 0.64;
+  /* 画布宽高比 320 : 400 */
   --pet-aspect: 0.8;
   /* 由上面推导，不要直接改 */
   --pet-canvas-height: calc(var(--pet-char-height) / var(--pet-char-in-canvas));
@@ -44,7 +44,7 @@ html, body {
   width: calc(var(--pet-canvas-height) * var(--pet-aspect));
   cursor: grab;
   /* 沿角色轮廓投影（不是 box-shadow），制造"浮在桌面上"的感觉 */
-  filter: drop-shadow(0 5px 9px rgba(20, 30, 60, .22));
+  filter: drop-shadow(0 6px 11px rgba(20, 30, 60, .22));
   transform-origin: 50% 100%;
   transition: filter .25s ease;
   animation: petBreathe 3.8s ease-in-out infinite;
