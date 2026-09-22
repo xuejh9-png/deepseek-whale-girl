@@ -40,9 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var pinned = true
     var moveMonitor: Any?
 
-    // 窗口只包住角色本体（+ 头顶一个小特效位），不再为面板留空间
-    let winW: CGFloat = 200
-    let winH: CGFloat = 250
+    // 窗口 = 素材画布的实际显示尺寸（256×320 画布 @ 0.5 缩放）。
+    // 角色本体占画布高度 65%，对应屏幕高度 104 CSS px。
+    // 改大小：同时改 web/pet.css 的 --pet-char-height 和这两个值。
+    let winW: CGFloat = 128
+    let winH: CGFloat = 160
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)      // 不占 Dock
@@ -103,11 +105,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !dragging else { return }
         let mouse = NSEvent.mouseLocation
         let f = window.frame
-        // 窗口 = 角色本体（居中贴底）+ 头顶一小条特效位，命中区覆盖这些
-        let hit = NSRect(x: f.minX + f.width * 0.15,
-                         y: f.minY + f.height * 0.02,
-                         width: f.width * 0.70,
-                         height: f.height * 0.80)
+        // 角色本体在画布里的位置：x 25%~75%，y（自底）10%~75%。
+        // 命中区只覆盖角色，其余区域穿透鼠标。
+        let hit = NSRect(x: f.minX + f.width * 0.22,
+                         y: f.minY + f.height * 0.07,
+                         width: f.width * 0.56,
+                         height: f.height * 0.71)
         window.ignoresMouseEvents = !hit.contains(mouse)
     }
 

@@ -15,25 +15,36 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
 }
 
-/* ---------- 舞台：角色居中贴底 ---------- */
+/* ---------- 渲染尺寸（唯一配置点） ----------
+   Asset 分辨率与渲染尺寸彻底解耦。
+   以后要改大小，只动 --pet-char-height 这一个值。 */
+:root {
+  /* 角色本体的屏幕显示高度。目标 96~112 CSS px（Codex Pet 量级）。 */
+  --pet-char-height: 104px;
+  /* 角色在画布中的高度占比 —— 由素材规格决定，见 ASSET_SPEC.md §1 */
+  --pet-char-in-canvas: 0.65;
+  /* 画布宽高比 256 : 320 */
+  --pet-aspect: 0.8;
+  /* 由上面推导，不要直接改 */
+  --pet-canvas-height: calc(var(--pet-char-height) / var(--pet-char-in-canvas));
+}
+
+/* ---------- 舞台：画布正好铺满窗口 ---------- */
 .pet {
   position: fixed;
   inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  padding-bottom: 6px;
+  display: grid;
+  place-items: end center;
 }
 
-/* ---------- 角色本体 ---------- */
+/* ---------- 角色本体（= 画布） ---------- */
 .pet-body {
   position: relative;
-  height: 190px;
-  width: 132px;
+  height: var(--pet-canvas-height);
+  width: calc(var(--pet-canvas-height) * var(--pet-aspect));
   cursor: grab;
   /* 沿角色轮廓投影（不是 box-shadow），制造"浮在桌面上"的感觉 */
-  filter: drop-shadow(0 10px 18px rgba(20, 30, 60, .22));
+  filter: drop-shadow(0 5px 9px rgba(20, 30, 60, .22));
   transform-origin: 50% 100%;
   transition: filter .25s ease;
   animation: petBreathe 3.8s ease-in-out infinite;
@@ -78,30 +89,34 @@ html, body {
   0%, 100% { transform: rotate(-1.4deg); }
   50%      { transform: rotate(1.4deg); }
 }
+/* 位移量按 104px 的渲染高度重新标定（原值是按 190px 写的） */
 @keyframes petJump {
   0%   { transform: translateY(0) scale(1); }
-  35%  { transform: translateY(-14px) scale(1.04); }
-  70%  { transform: translateY(0) scale(.98); }
+  35%  { transform: translateY(-8px) scale(1.04); }
+  70%  { transform: translateY(0) scale(.97); }
   100% { transform: translateY(0) scale(1); }
 }
 @keyframes petShake {
   0%, 100% { transform: translateX(0); }
-  25%      { transform: translateX(-4px); }
-  75%      { transform: translateX(4px); }
+  25%      { transform: translateX(-2.5px); }
+  75%      { transform: translateX(2.5px); }
 }
 
-/* ---------- 状态特效：很轻，只在状态期间出现 ---------- */
+/* ---------- 状态特效：浮在角色头顶的画布留白区里 ---------- */
 .pet-fx {
-  position: relative;
-  height: 16px;
-  margin-bottom: 4px;
+  position: absolute;
+  top: 1%;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 14px;
   pointer-events: none;
+  z-index: 2;
 }
 .pet-fx > * { display: none; }
 
-.fx-dots { gap: 4px; align-items: center; height: 14px; }
+.fx-dots { gap: 3px; align-items: center; height: 11px; }
 .fx-dots i {
-  width: 5px; height: 5px; border-radius: 50%;
+  width: 4px; height: 4px; border-radius: 50%;
   background: #2b6cff; opacity: .35;
   animation: fxDot 1.2s ease-in-out infinite;
 }
@@ -109,23 +124,23 @@ html, body {
 .fx-dots i:nth-child(3) { animation-delay: .36s; }
 @keyframes fxDot {
   0%, 60%, 100% { opacity: .3; translate: 0 0; }
-  30%           { opacity: 1;  translate: 0 -3px; }
+  30%           { opacity: 1;  translate: 0 -2px; }
 }
 
 .fx-ring {
-  width: 13px; height: 13px; border-radius: 50%;
-  border: 2px solid rgba(43, 108, 255, .22);
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid rgba(43, 108, 255, .22);
   border-top-color: #2b6cff;
   animation: fxSpin .9s linear infinite;
 }
 @keyframes fxSpin { to { transform: rotate(360deg); } }
 
 .fx-mark {
-  font-size: 13px; font-weight: 700; color: #ef4444;
+  font-size: 12px; font-weight: 700; color: #ef4444; line-height: 1;
   animation: fxPop .45s ease;
 }
 .fx-check {
-  font-size: 13px; font-weight: 700; color: #16a34a;
+  font-size: 12px; font-weight: 700; color: #16a34a; line-height: 1;
   animation: fxPop .45s ease;
 }
 @keyframes fxPop {
