@@ -6,9 +6,13 @@
 __pycache__/
 *.py[cod]
 
-# 生成过程中的临时文件
+# 运行时产物
+pet.port
 *.tmp
 用量报告.html.tmp
+
+# 编译产物（desktop/build.sh 会重新生成）
+desktop/WorkBuddyPet.app/
 
 # 编辑器
 .vscode/
