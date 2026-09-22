@@ -1,0 +1,310 @@
+/* ============================================================
+   WorkBuddy Pet —— 悬浮宠物样式
+   核心原则：角色本身没有卡片、没有背景框、没有头像底。
+   只有一条 drop-shadow 沿角色轮廓，制造"浮在页面上"的感觉。
+   ============================================================ */
+
+.pet {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+
+/* ---------- 角色本体：完全透明 ---------- */
+.pet-body {
+  position: relative;
+  height: 190px;
+  width: 132px;
+  cursor: grab;
+  /* 关键：无 background / 无 border / 无卡片阴影 */
+  filter: drop-shadow(0 12px 20px rgba(20, 30, 60, .18));
+  transform-origin: 50% 100%;
+  animation: petBreathe 3.8s ease-in-out infinite;
+  transition: filter .25s ease;
+}
+.pet.dragging .pet-body { cursor: grabbing; }
+
+@keyframes petBreathe {
+  0%, 100% { translate: 0 0; }
+  50%      { translate: 0 -7px; }
+}
+
+.pet-inner {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 100%;
+  transition: transform .28s cubic-bezier(.34, 1.4, .64, 1);
+}
+
+/* 四个视图叠放，靠 opacity 切换 */
+.pet-view {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  height: 100%;
+  width: auto;
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity .16s ease;
+  pointer-events: none;
+}
+.pet-view.on { opacity: 1; }
+
+/* ---------- 状态特效 ---------- */
+.pet-fx {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.pet-fx > * { display: none; }
+
+.fx-dots { gap: 4px; align-items: center; height: 14px; }
+.fx-dots i {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--brand, #2b6cff); opacity: .35;
+  animation: fxDot 1.2s ease-in-out infinite;
+}
+.fx-dots i:nth-child(2) { animation-delay: .18s; }
+.fx-dots i:nth-child(3) { animation-delay: .36s; }
+@keyframes fxDot {
+  0%, 60%, 100% { opacity: .3; translate: 0 0; }
+  30%           { opacity: 1;  translate: 0 -3px; }
+}
+
+.fx-ring {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid rgba(43, 108, 255, .22);
+  border-top-color: var(--brand, #2b6cff);
+  animation: fxSpin .9s linear infinite;
+}
+@keyframes fxSpin { to { transform: rotate(360deg); } }
+
+.fx-mark {
+  font-size: 13px; font-weight: 700; color: #ef4444;
+  animation: fxPop .45s ease;
+}
+.fx-check {
+  font-size: 13px; font-weight: 700; color: #16a34a;
+  animation: fxPop .45s ease;
+}
+@keyframes fxPop {
+  0%   { transform: scale(.4); opacity: 0; }
+  60%  { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+.pet[data-state="thinking"] .fx-dots  { display: flex; }
+.pet[data-state="working"]  .fx-ring  { display: block; }
+.pet[data-state="success"]  .fx-check { display: block; }
+.pet[data-state="error"]    .fx-mark  { display: block; }
+
+/* ---------- 状态姿态（只动 transform，不影响呼吸的 translate） ---------- */
+.pet[data-state="thinking"] .pet-inner { transform: rotate(-2.5deg); }
+.pet[data-state="working"]  .pet-inner { animation: petWork 1.15s ease-in-out infinite; }
+.pet[data-state="success"]  .pet-inner { animation: petJump .62s cubic-bezier(.3,1.4,.5,1); }
+.pet[data-state="error"]    .pet-inner { animation: petShake .5s ease; }
+.pet[data-state="offline"]  .pet-inner { transform: scaleY(.93) translateY(5px); opacity: .82; }
+
+@keyframes petWork {
+  0%, 100% { transform: rotate(-1.4deg); }
+  50%      { transform: rotate(1.4deg); }
+}
+@keyframes petJump {
+  0%   { transform: translateY(0) scale(1); }
+  35%  { transform: translateY(-14px) scale(1.04); }
+  70%  { transform: translateY(0) scale(.98); }
+  100% { transform: translateY(0) scale(1); }
+}
+@keyframes petShake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-4px); }
+  75%      { transform: translateX(4px); }
+}
+
+/* ---------- 微型 HUD ---------- */
+.pet-hud {
+  position: relative;
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hud-mini {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .82);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 2px 8px rgba(20, 30, 60, .10);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink, #1a1d21);
+  transition: opacity .2s ease;
+}
+.hud-mini .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #94a3b8;
+}
+.pet-hud[data-level="ok"]       .dot { background: #22c55e; }
+.pet-hud[data-level="warn"]     .dot { background: #eab308; }
+.pet-hud[data-level="high"]     .dot { background: #f97316; }
+.pet-hud[data-level="critical"] .dot { background: #ef4444; animation: hudPulse 1.7s ease-in-out infinite; }
+@keyframes hudPulse { 50% { opacity: .35; } }
+
+.pet[data-state="offline"] .hud-mini { color: var(--muted, #6b7280); }
+
+/* 悬停时展开的详细信息 */
+.hud-full {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%) translateY(5px);
+  min-width: 148px;
+  padding: 9px 12px;
+  border-radius: 11px;
+  background: #fff;
+  border: 1px solid var(--line, #e6e8ec);
+  box-shadow: 0 10px 26px rgba(20, 30, 60, .14);
+  font-size: 11px;
+  line-height: 1.65;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.pet:hover .hud-full {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.hud-full .big {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.hud-full .sub { color: var(--muted, #6b7280); }
+
+/* ---------- 点击弹出的面板 ---------- */
+.pet-panel {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  right: 0;
+  width: 246px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid var(--line, #e6e8ec);
+  box-shadow: 0 16px 40px rgba(20, 30, 60, .16);
+  font-size: 12px;
+  opacity: 0;
+  transform: translateY(8px) scale(.97);
+  pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.pet-panel.open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+.p-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line, #e6e8ec);
+}
+.p-head b { font-size: 13px; }
+.p-close {
+  cursor: pointer;
+  color: var(--muted, #6b7280);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.p-close:hover { color: var(--ink, #1a1d21); }
+
+.p-panel dl { margin: 0; }
+.p-panel .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+}
+.p-panel .row dt { color: var(--muted, #6b7280); flex: none; }
+.p-panel .row dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+.p-task {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line, #e6e8ec);
+}
+.p-task span {
+  color: var(--muted, #6b7280);
+  font-size: 11px;
+}
+.p-task p {
+  margin: 4px 0 0;
+  line-height: 1.55;
+  max-height: 52px;
+  overflow: hidden;
+}
+
+.pet[data-state="working"]  .p-head b { color: var(--brand, #2b6cff); }
+.pet[data-state="thinking"] .p-head b { color: #7c3aed; }
+.pet[data-state="success"]  .p-head b { color: #16a34a; }
+.pet[data-state="error"]    .p-head b { color: #ef4444; }
+.pet[data-state="offline"]  .p-head b { color: var(--muted, #6b7280); }
+
+/* ---------- 避免遮挡正文 ---------- */
+@media (max-width: 1340px) {
+  body:not(.desktop-mode) .wrap { padding-right: 178px; }
+  body:not(.desktop-mode) .pet-body { height: 156px; width: 108px; }
+}
+@media (max-width: 880px) {
+  body:not(.desktop-mode) .pet { display: none; }
+  body:not(.desktop-mode) .wrap { padding-right: 24px; }
+}
+
+/* ---------- 桌面宠物模式（由 ?desktop=1 触发） ----------
+   窗口本身就是角色，页面其余部分全部隐藏、背景透明。 */
+body.desktop-mode {
+  background: transparent;
+  overflow: hidden;
+}
+body.desktop-mode .wrap { display: none; }
+body.desktop-mode .pet {
+  inset: 0;
+  right: auto;
+  bottom: auto;
+  width: auto;
+  height: auto;
+  justify-content: flex-end;
+  align-items: center;
+}
+body.desktop-mode .pet-body { height: 190px; width: 132px; }
+body.desktop-mode .pet-panel { right: 16px; }
+
+/* 尊重系统的"减少动态效果"设置 */
+@media (prefers-reduced-motion: reduce) {
+  .pet-body,
+  .pet[data-state] .pet-inner,
+  .fx-dots i,
+  .fx-ring { animation: none !important; }
+}

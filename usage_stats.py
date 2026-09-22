@@ -297,16 +297,17 @@ def build_html(agg, title, meta):
     last = agg["last"].strftime("%Y-%m-%d %H:%M") if agg["last"] else "-"
     generated = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # 看板娘台词：全部来自真实数据
-    mascot_lines = [
-        "本月累计 %s token 啦～" % human(agg["total"]),
-        "最多的一天是 %s，%s！" % (agg["peak_day"][5:], human(agg["peak_val"])),
-        "我们连续 %d 天都见面了～" % agg["streak_cur"],
-        "%s 次调用，辛苦你啦" % comma(agg["calls"]),
-        "有一次我们聊了 %s 呢" % fmt_dur(agg["longest_sec"]),
-        "这个月有 %d 天你来找过我" % agg["active_days"],
-        "最长连着 %d 天，好厉害！" % agg["streak_best"],
-    ]
+    # 兜底数据：daemon 没启动时宠物用这份静态值；启动了就用实时 /state
+    pet_static = {
+        "model": agg["by_model"].most_common(1)[0][0] if agg["by_model"] else None,
+        "totalTokens": agg["total"],
+        "calls": agg["calls"],
+        "contextTokens": None,
+        "contextWindow": None,
+        "contextUsagePercent": None,
+        "generatedAt": generated,
+        "source": "static snapshot",
+    }
 
     # 按天柱状
     days = sorted(agg["by_day"])
@@ -426,38 +427,8 @@ def build_html(agg, title, meta):
   details.fold[open]>summary .hint::after{content:" ▴"}
   .fold-body{padding:16px 20px 20px}
   footer{color:var(--muted);font-size:12px;text-align:center;margin-top:24px}
-
-  /* ---- 看板娘 ---- */
-  .mascot{position:fixed;right:20px;bottom:20px;z-index:50;cursor:pointer;
-    display:flex;flex-direction:column;align-items:center;-webkit-user-select:none;user-select:none}
-  .mascot .bubble{position:relative;max-width:210px;background:#fff;border:1px solid var(--line);
-    border-radius:12px;padding:9px 13px;font-size:12px;line-height:1.55;color:var(--ink);
-    box-shadow:0 8px 22px rgba(20,30,60,.12);margin-bottom:10px;text-align:center;
-    opacity:0;transform:translateY(6px);transition:opacity .22s,transform .22s;pointer-events:none}
-  .mascot .bubble.show{opacity:1;transform:translateY(0)}
-  .mascot .bubble::after{content:"";position:absolute;left:50%;bottom:-6px;width:10px;height:10px;
-    background:#fff;border-right:1px solid var(--line);border-bottom:1px solid var(--line);
-    transform:translateX(-50%) rotate(45deg)}
-  .mascot .stage{position:relative;height:176px;width:120px;background:#fff;
-    border:1px solid var(--line);border-radius:20px;overflow:hidden;
-    box-shadow:0 10px 26px rgba(20,30,60,.13);
-    animation:bob 3.8s ease-in-out infinite;transition:transform .25s ease}
-  .mascot:hover .stage{transform:scale(1.06)}
-  .mascot .stage img{position:absolute;left:50%;bottom:6px;height:calc(100% - 12px);width:auto;
-    transform:translateX(-50%);opacity:0;transition:opacity .15s ease}
-  .mascot .stage img.on{opacity:1}
-  @keyframes bob{0%,100%{translate:0 0}50%{translate:0 -9px}}
-  /* 视口不够宽时，正文右侧让出看板娘的位置，避免遮挡表格 */
-  @media (max-width:1340px){
-    .wrap{padding-right:172px}
-    .mascot .stage{height:152px;width:104px}
-    .mascot .bubble{max-width:196px;font-size:11px}
-  }
-  @media (max-width:880px){
-    .mascot{display:none}
-    .wrap{padding-right:24px}
-  }
 </style>
+<link rel="stylesheet" href="web/pet.css">
 </head>
 <body>
 <div class="wrap">
@@ -527,49 +498,45 @@ __HEAT_SECTION__  <section>
   <footer>数据来源：WorkBuddy 本地会话记录（每次调用的输入 / 输出 token）</footer>
 </div>
 
-<div class="mascot" id="mascot" title="点我一下">
-  <div class="bubble" id="bubble"></div>
-  <div class="stage" id="stage">
-    <img src="assets/front.png" class="on" alt="DeepSeek 看板娘">
-    <img src="assets/left.png" alt="DeepSeek 看板娘 侧视">
-    <img src="assets/back.png" alt="DeepSeek 看板娘 背面">
-    <img src="assets/right.png" alt="DeepSeek 看板娘 侧视">
+<div class="pet" id="pet" data-state="idle">
+  <div class="pet-panel" id="petPanel">
+    <div class="p-head"><b id="pState">空闲</b><span class="p-close" id="pClose">×</span></div>
+    <dl>
+      <div class="row"><dt>模型</dt><dd id="pModel">—</dd></div>
+      <div class="row"><dt>Context</dt><dd id="pCtx">—</dd></div>
+      <div class="row"><dt>本月</dt><dd id="pMonth">—</dd></div>
+      <div class="row"><dt>调用</dt><dd id="pCalls">—</dd></div>
+    </dl>
+    <div class="p-task"><span>当前任务</span><p id="pTask">—</p></div>
+  </div>
+
+  <div class="pet-body" id="petBody">
+    <div class="pet-inner">
+      <img class="pet-view on" src="assets/pet/front.png" alt="DeepSeek 鲸鱼娘">
+      <img class="pet-view" src="assets/pet/left.png" alt="DeepSeek 鲸鱼娘 左侧">
+      <img class="pet-view" src="assets/pet/back.png" alt="DeepSeek 鲸鱼娘 背面">
+      <img class="pet-view" src="assets/pet/right.png" alt="DeepSeek 鲸鱼娘 右侧">
+    </div>
+    <div class="pet-fx">
+      <span class="fx-dots"><i></i><i></i><i></i></span>
+      <span class="fx-ring"></span>
+      <span class="fx-mark">!</span>
+      <span class="fx-check">✓</span>
+    </div>
+  </div>
+
+  <div class="pet-hud" id="petHud" data-level="na">
+    <div class="hud-mini"><i class="dot"></i><span id="miniPct">—</span></div>
+    <div class="hud-full">
+      <div class="big" id="fullCtx">—</div>
+      <div class="sub" id="fullPct">Context —</div>
+      <div class="sub" id="fullModel">—</div>
+    </div>
   </div>
 </div>
 
-<script>
-(function(){
-  var LINES = __MASCOT_LINES__;
-  var views = Array.prototype.slice.call(document.querySelectorAll("#stage img"));
-  var bubble = document.getElementById("bubble");
-  var mascot = document.getElementById("mascot");
-  var li = 0, busy = false, hideTimer = null;
-
-  function say(text){
-    bubble.textContent = text;
-    bubble.classList.add("show");
-    clearTimeout(hideTimer);
-    hideTimer = setTimeout(function(){ bubble.classList.remove("show"); }, 4600);
-  }
-  function show(i){
-    views.forEach(function(v, k){ v.classList.toggle("on", k === i); });
-  }
-
-  mascot.addEventListener("click", function(){
-    if (busy) return;
-    busy = true;
-    var seq = [1, 2, 3, 0], step = 0;
-    var timer = setInterval(function(){
-      show(seq[step++]);
-      if (step >= seq.length){ clearInterval(timer); busy = false; }
-    }, 200);
-    say(LINES[li++ % LINES.length]);
-  });
-
-  // 进页面先打个招呼
-  setTimeout(function(){ say(LINES[li++ % LINES.length]); }, 800);
-})();
-</script>
+<script>window.PET_STATIC = __PET_STATIC__;</script>
+<script src="web/pet.js"></script>
 </body>
 </html>
 """
@@ -583,7 +550,7 @@ __HEAT_SECTION__  <section>
         "__STREAK_CUR__": str(agg["streak_cur"]), "__STREAK_BEST__": str(agg["streak_best"]),
         "__DAYS__": str(agg["active_days"]), "__CALLS__": comma(agg["calls"]),
         "__HEAT_SECTION__": heat_section,
-        "__MASCOT_LINES__": json.dumps(mascot_lines, ensure_ascii=False),
+        "__PET_STATIC__": json.dumps(pet_static, ensure_ascii=False),
         "__H1__": "DeepSeek Token 面板" if "DeepSeek" in title else "Token 用量面板",
         "__BARS__": bars or "<p style='color:#6b7280'>暂无数据</p>",
         "__MODEL_ROWS__": model_rows, "__SESS_ROWS__": sess_rows,
