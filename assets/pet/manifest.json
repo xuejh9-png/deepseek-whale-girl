@@ -22,6 +22,34 @@
       "loopStart": 1,
       "loopEnd": 20
     },
+    "click": {
+      "file": "click.png",
+      "frameCount": 8,
+      "rows": 2,
+      "fps": 12,
+      "loop": false,
+      "loopStart": null,
+      "loopEnd": null
+    },
+    "jump": {
+      "file": "jump.png",
+      "frameCount": 14,
+      "rows": 3,
+      "fps": 14,
+      "loop": false,
+      "loopStart": null,
+      "loopEnd": null,
+      "airborneFrame": 7
+    },
+    "drag": {
+      "file": "drag.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 10,
+      "loop": true,
+      "loopStart": 5,
+      "loopEnd": 12
+    },
     "think": {
       "file": "think.png",
       "frameCount": 12,
