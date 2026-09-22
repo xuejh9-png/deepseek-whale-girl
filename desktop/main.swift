@@ -37,12 +37,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var dragging = false
     var dragStartMouse = NSPoint.zero
     var dragStartWin = NSPoint.zero
-    var panelOpen = false
     var pinned = true
     var moveMonitor: Any?
 
-    let winW: CGFloat = 280
-    let winH: CGFloat = 430
+    // 窗口只包住角色本体（+ 头顶一个小特效位），不再为面板留空间
+    let winW: CGFloat = 200
+    let winH: CGFloat = 250
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)      // 不占 Dock
@@ -85,8 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func loadPage() {
-        let sep = baseURL.contains("?") ? "&" : "?"
-        guard let url = URL(string: baseURL + sep + "desktop=1") else { return }
+        // 桌宠是独立页面（只含角色），不再是「用量报告」的一部分
+        let base = baseURL.hasSuffix("/") ? baseURL : baseURL + "/"
+        guard let url = URL(string: base + "pet.html") else { return }
         webView.load(URLRequest(url: url))
     }
 
@@ -100,17 +101,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func updatePassthrough() {
         guard !dragging else { return }
-        if panelOpen {                              // 面板打开时整窗可点
-            window.ignoresMouseEvents = false
-            return
-        }
         let mouse = NSEvent.mouseLocation
         let f = window.frame
-        // 角色大致占据窗口的中下部
-        let hit = NSRect(x: f.minX + f.width * 0.14,
-                         y: f.minY + f.height * 0.035,
-                         width: f.width * 0.72,
-                         height: f.height * 0.66)
+        // 窗口 = 角色本体（居中贴底）+ 头顶一小条特效位，命中区覆盖这些
+        let hit = NSRect(x: f.minX + f.width * 0.15,
+                         y: f.minY + f.height * 0.02,
+                         width: f.width * 0.70,
+                         height: f.height * 0.80)
         window.ignoresMouseEvents = !hit.contains(mouse)
     }
 
@@ -130,10 +127,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         case "dragEnd":
             dragging = false
-            updatePassthrough()
-
-        case "panel":
-            panelOpen = (body["open"] as? Bool) ?? false
             updatePassthrough()
 
         case "menu":

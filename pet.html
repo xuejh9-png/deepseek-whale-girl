@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkBuddy Pet</title>
+<link rel="stylesheet" href="web/pet.css">
+</head>
+<body>
+
+<!-- 桌面宠物独立页面：只有角色本体，没有 HUD / 面板 / Dashboard。
+     由 desktop/WorkBuddyPet.app（Swift + WKWebView 透明窗口）加载。
+     也可直接用浏览器打开调试。 -->
+
+<div class="pet" id="pet" data-state="idle">
+
+  <div class="pet-fx">
+    <span class="fx-dots"><i></i><i></i><i></i></span>
+    <span class="fx-ring"></span>
+    <span class="fx-mark">!</span>
+    <span class="fx-check">✓</span>
+  </div>
+
+  <div class="pet-body" id="petBody">
+    <div class="pet-inner">
+      <img id="petSprite" src="assets/pet/front.png" alt="WorkBuddy 鲸鱼娘">
+    </div>
+  </div>
+
+</div>
+
+<script src="web/pet.js"></script>
+</body>
+</html>

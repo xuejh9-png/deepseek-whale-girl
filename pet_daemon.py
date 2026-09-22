@@ -305,6 +305,11 @@ def compute_usage():
 
 
 def usage_snapshot():
+    """按需计算 + TTL 缓存。
+
+    刻意不做后台预热：守护进程长期运行，而全量聚合一次要扫上百 MB，
+    20 秒一跑纯属浪费。改为被请求时才算。
+    """
     with _usage_lock:
         fresh = time.time() - _usage_cache["ts"] < USAGE_TTL
         if _usage_cache["data"] is not None and fresh:
@@ -318,27 +323,51 @@ def usage_snapshot():
         return data
 
 
-def usage_warmer():
-    """后台预热，避免第一次请求卡住。"""
-    while True:
-        try:
-            usage_snapshot()
-        except Exception:
-            pass
-        time.sleep(USAGE_TTL)
-
-
 # ---------------------------------------------------------------- 状态组装
 
 def build_state():
+    """只回 Agent 状态。
+
+    宠物只需要知道"AI 现在在干什么"。Token / Context / Model 不属于宠物职责，
+    已挪到独立的 /usage 端点，避免桌面宠物被迫承担 Dashboard 功能。
+    """
     now = (time.time() * 1000)
     path, recs = latest_session()
     state, rec = infer_state(now, recs)
 
+    sessions = active_sessions(now)
+    cur = None
+    for s in sessions:
+        if path and s.get("sessionId") and s["sessionId"] in path:
+            cur = s
+            break
+    if cur is None and sessions:
+        cur = sessions[0]
+
+    return {
+        "ok": True,
+        "ts": int(now),
+        "apiVersion": 2,
+        "agent": {
+            "state": state,
+            "label": LABELS.get(state, state),
+            "task": scan_last_prompt(path),
+            "cwd": (cur or {}).get("cwd"),
+            "sessionId": (cur or {}).get("sessionId"),
+            "lastActivity": (rec or {}).get("timestamp"),
+            "activeSessions": len(sessions),
+        },
+    }
+
+
+def build_usage():
+    """用量单独一个端点，给「用量报告」页或未来的 Usage / Diagnostics 页用。"""
+    now = (time.time() * 1000)
+    _, recs = latest_session()
     ctx_tokens, model = context_usage(recs)
     window = model_context_window(model)
 
-    # TokenUsage Adapter —— 统一格式，前端不依赖任何 provider 原始字段
+    # TokenUsage Adapter —— 统一格式，消费者不依赖任何 provider 原始字段
     usage = {
         "inputTokens": None,
         "outputTokens": None,
@@ -358,31 +387,7 @@ def build_state():
         usage["totalTokens"] = snap.get("totalTokens")
         usage["cachedTokens"] = snap.get("cachedTokens")
         usage["calls"] = snap.get("calls")
-
-    sessions = active_sessions(now)
-    cur = None
-    for s in sessions:
-        if path and s.get("sessionId") and s["sessionId"] in path:
-            cur = s
-            break
-    if cur is None and sessions:
-        cur = sessions[0]
-
-    return {
-        "ok": True,
-        "ts": int(now),
-        "apiVersion": 1,
-        "agent": {
-            "state": state,
-            "label": LABELS.get(state, state),
-            "task": scan_last_prompt(path),
-            "cwd": (cur or {}).get("cwd"),
-            "sessionId": (cur or {}).get("sessionId"),
-            "lastActivity": (rec or {}).get("timestamp"),
-            "activeSessions": len(sessions),
-        },
-        "usage": usage,
-    }
+    return {"ok": True, "ts": int(now), "apiVersion": 1, "usage": usage}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -411,8 +416,10 @@ class PetHandler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/state", "/api/state"):
             return self._json(build_state())
+        if path in ("/usage", "/api/usage"):
+            return self._json(build_usage())
         if path in ("/health", "/version"):
-            return self._json({"ok": True, "version": "pet-1.0"})
+            return self._json({"ok": True, "version": "pet-2.0"})
         if path == "/":
             self.path = "/" + "用量报告.html"
         return super().do_GET()
@@ -471,7 +478,6 @@ def main():
         print(json.dumps(build_state(), ensure_ascii=False, indent=2))
         return 0
 
-    threading.Thread(target=usage_warmer, daemon=True).start()
     return serve(args.port, args.open)
 
 

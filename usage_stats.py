@@ -297,18 +297,6 @@ def build_html(agg, title, meta):
     last = agg["last"].strftime("%Y-%m-%d %H:%M") if agg["last"] else "-"
     generated = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # 兜底数据：daemon 没启动时宠物用这份静态值；启动了就用实时 /state
-    pet_static = {
-        "model": agg["by_model"].most_common(1)[0][0] if agg["by_model"] else None,
-        "totalTokens": agg["total"],
-        "calls": agg["calls"],
-        "contextTokens": None,
-        "contextWindow": None,
-        "contextUsagePercent": None,
-        "generatedAt": generated,
-        "source": "static snapshot",
-    }
-
     # 按天柱状
     days = sorted(agg["by_day"])
     peak = max(agg["by_day"].values()) if days else 1
@@ -428,7 +416,6 @@ def build_html(agg, title, meta):
   .fold-body{padding:16px 20px 20px}
   footer{color:var(--muted);font-size:12px;text-align:center;margin-top:24px}
 </style>
-<link rel="stylesheet" href="web/pet.css">
 </head>
 <body>
 <div class="wrap">
@@ -497,46 +484,6 @@ __HEAT_SECTION__  <section>
 
   <footer>数据来源：WorkBuddy 本地会话记录（每次调用的输入 / 输出 token）</footer>
 </div>
-
-<div class="pet" id="pet" data-state="idle">
-  <div class="pet-panel" id="petPanel">
-    <div class="p-head"><b id="pState">空闲</b><span class="p-close" id="pClose">×</span></div>
-    <dl>
-      <div class="row"><dt>模型</dt><dd id="pModel">—</dd></div>
-      <div class="row"><dt>Context</dt><dd id="pCtx">—</dd></div>
-      <div class="row"><dt>本月</dt><dd id="pMonth">—</dd></div>
-      <div class="row"><dt>调用</dt><dd id="pCalls">—</dd></div>
-    </dl>
-    <div class="p-task"><span>当前任务</span><p id="pTask">—</p></div>
-  </div>
-
-  <div class="pet-body" id="petBody">
-    <div class="pet-inner">
-      <img class="pet-view on" src="assets/pet/front.png" alt="DeepSeek 鲸鱼娘">
-      <img class="pet-view" src="assets/pet/left.png" alt="DeepSeek 鲸鱼娘 左侧">
-      <img class="pet-view" src="assets/pet/back.png" alt="DeepSeek 鲸鱼娘 背面">
-      <img class="pet-view" src="assets/pet/right.png" alt="DeepSeek 鲸鱼娘 右侧">
-    </div>
-    <div class="pet-fx">
-      <span class="fx-dots"><i></i><i></i><i></i></span>
-      <span class="fx-ring"></span>
-      <span class="fx-mark">!</span>
-      <span class="fx-check">✓</span>
-    </div>
-  </div>
-
-  <div class="pet-hud" id="petHud" data-level="na">
-    <div class="hud-mini"><i class="dot"></i><span id="miniPct">—</span></div>
-    <div class="hud-full">
-      <div class="big" id="fullCtx">—</div>
-      <div class="sub" id="fullPct">Context —</div>
-      <div class="sub" id="fullModel">—</div>
-    </div>
-  </div>
-</div>
-
-<script>window.PET_STATIC = __PET_STATIC__;</script>
-<script src="web/pet.js"></script>
 </body>
 </html>
 """
@@ -550,7 +497,6 @@ __HEAT_SECTION__  <section>
         "__STREAK_CUR__": str(agg["streak_cur"]), "__STREAK_BEST__": str(agg["streak_best"]),
         "__DAYS__": str(agg["active_days"]), "__CALLS__": comma(agg["calls"]),
         "__HEAT_SECTION__": heat_section,
-        "__PET_STATIC__": json.dumps(pet_static, ensure_ascii=False),
         "__H1__": "DeepSeek Token 面板" if "DeepSeek" in title else "Token 用量面板",
         "__BARS__": bars or "<p style='color:#6b7280'>暂无数据</p>",
         "__MODEL_ROWS__": model_rows, "__SESS_ROWS__": sess_rows,
