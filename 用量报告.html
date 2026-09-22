@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSeek Token 面板 · 2026 年 9 月　·　仅 DeepSeek</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--ink:#1a1d21;--muted:#6b7280;--line:#e6e8ec;
+    --brand:#2b6cff;--brand-soft:#eaf1ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);line-height:1.55;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 24px 64px}
+  h1{font-size:24px;margin:0 0 6px;letter-spacing:-.01em}
+  .meta{color:var(--muted);font-size:13px}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:20px 0}
+  @media (max-width:720px){.cards{grid-template-columns:1fr 1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card .k{font-size:12px;color:var(--muted);margin-bottom:4px}
+  .card .v{font-size:24px;font-weight:600;letter-spacing:-.02em}
+  .card .s{font-size:11px;color:var(--muted);margin-top:2px}
+  .card.hi{border-color:#cfe0ff;background:linear-gradient(180deg,#f7faff,#fff)}
+  .card.hi .v{color:var(--brand)}
+  section,.fold{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px;margin-bottom:16px}
+  h2{font-size:15px;margin:0 0 16px;font-weight:600}
+  h3.mini{font-size:12px;margin:0 0 12px;font-weight:600;color:var(--muted)}
+  .heat{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,13px);
+    gap:3px;overflow-x:auto;padding:4px 0 2px}
+  .hc{width:13px;height:13px;border-radius:3px;background:#eef1f5}
+  .hc.blank{background:transparent}
+  .hc.l1{background:#cddffd}.hc.l2{background:#9dbffb}
+  .hc.l3{background:#5f92f5}.hc.l4{background:#2b6cff}
+  .heat-months{position:relative;height:16px;margin-top:2px}
+  .heat-months span{position:absolute;top:0;font-size:10px;color:var(--muted);white-space:nowrap}
+  .legend{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:11px;
+    justify-content:flex-end;margin-top:8px}
+  .legend .hc{width:11px;height:11px}
+  .chart{display:flex;align-items:flex-end;gap:6px;height:200px;overflow-x:auto;padding-top:8px}
+  .bar-col{flex:1 0 42px;display:flex;flex-direction:column;align-items:center;
+    justify-content:flex-end;height:100%}
+  .bar-val{font-size:10px;color:var(--muted);margin-bottom:4px;white-space:nowrap}
+  .bar{width:100%;max-width:34px;background:linear-gradient(180deg,#5b93ff,#2b6cff);
+    border-radius:5px 5px 0 0;min-height:2px}
+  .bar-day{font-size:10px;color:var(--muted);margin-top:6px;white-space:nowrap}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-weight:500;font-size:12px;
+    border-bottom:1px solid var(--line);padding:0 8px 8px}
+  td{padding:9px 8px;border-bottom:1px solid #f1f2f4;vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .rk{color:var(--muted);width:28px}
+  .sub{color:var(--muted);font-size:11px;margin-top:2px;word-break:break-all}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.cols{grid-template-columns:1fr}}
+  details.fold{padding:0}
+  details.fold>summary{cursor:pointer;padding:16px 20px;font-size:14px;font-weight:600;
+    list-style:none;display:flex;align-items:center;justify-content:space-between;
+    user-select:none;border-radius:12px}
+  details.fold>summary::-webkit-details-marker{display:none}
+  details.fold>summary:hover{background:#fafbfc}
+  details.fold>summary .hint{font-size:12px;color:var(--muted);font-weight:400}
+  details.fold>summary .hint::after{content:" ▾"}
+  details.fold[open]>summary{border-bottom:1px solid var(--line);border-radius:12px 12px 0 0}
+  details.fold[open]>summary .hint::after{content:" ▴"}
+  .fold-body{padding:16px 20px 20px}
+  footer{color:var(--muted);font-size:12px;text-align:center;margin-top:24px}
+
+  /* ---- 看板娘 ---- */
+  .mascot{position:fixed;right:20px;bottom:20px;z-index:50;cursor:pointer;
+    display:flex;flex-direction:column;align-items:center;-webkit-user-select:none;user-select:none}
+  .mascot .bubble{position:relative;max-width:210px;background:#fff;border:1px solid var(--line);
+    border-radius:12px;padding:9px 13px;font-size:12px;line-height:1.55;color:var(--ink);
+    box-shadow:0 8px 22px rgba(20,30,60,.12);margin-bottom:10px;text-align:center;
+    opacity:0;transform:translateY(6px);transition:opacity .22s,transform .22s;pointer-events:none}
+  .mascot .bubble.show{opacity:1;transform:translateY(0)}
+  .mascot .bubble::after{content:"";position:absolute;left:50%;bottom:-6px;width:10px;height:10px;
+    background:#fff;border-right:1px solid var(--line);border-bottom:1px solid var(--line);
+    transform:translateX(-50%) rotate(45deg)}
+  .mascot .stage{position:relative;height:176px;width:120px;background:#fff;
+    border:1px solid var(--line);border-radius:20px;overflow:hidden;
+    box-shadow:0 10px 26px rgba(20,30,60,.13);
+    animation:bob 3.8s ease-in-out infinite;transition:transform .25s ease}
+  .mascot:hover .stage{transform:scale(1.06)}
+  .mascot .stage img{position:absolute;left:50%;bottom:6px;height:calc(100% - 12px);width:auto;
+    transform:translateX(-50%);opacity:0;transition:opacity .15s ease}
+  .mascot .stage img.on{opacity:1}
+  @keyframes bob{0%,100%{translate:0 0}50%{translate:0 -9px}}
+  /* 视口不够宽时，正文右侧让出看板娘的位置，避免遮挡表格 */
+  @media (max-width:1340px){
+    .wrap{padding-right:172px}
+    .mascot .stage{height:152px;width:104px}
+    .mascot .bubble{max-width:172px;font-size:11px}
+  }
+  @media (max-width:880px){
+    .mascot{display:none}
+    .wrap{padding-right:24px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>DeepSeek Token 面板</h1>
+    <div class="meta">统计周期 2026 年 9 月　·　仅 DeepSeek　·　数据范围 2026-09-08 11:18 ~ 2026-09-22 16:37　·　生成于 2026-09-22 16:37:06</div>
+  </header>
+
+  <div class="cards">
+    <div class="card hi"><div class="k">累计 Token</div><div class="v">13.25 亿</div>
+      <div class="s">1,325,172,787</div></div>
+    <div class="card"><div class="k">峰值 Token</div><div class="v">4.17 亿</div>
+      <div class="s">2026-09-20</div></div>
+    <div class="card"><div class="k">最长聊天时长</div><div class="v">28 小时 6 分</div>
+      <div class="s">09-18 11:50 → 09-19 15:56</div></div>
+    <div class="card"><div class="k">当前连续天数</div><div class="v">6 天</div>
+      <div class="s">最长 6 天　共活跃 11 天</div></div>
+    <div class="card"><div class="k">调用次数</div><div class="v">5,457</div>
+      <div class="s">次 LLM 请求</div></div>
+  </div>
+
+  <section>
+    <h2>Token 活动（按天）</h2>
+    <div class="chart"><div class="bar-col" title="2026-09-08：6,724,857 tokens"><div class="bar-val">672.5 万</div><div class="bar" style="height:2px"></div><div class="bar-day">09-08</div></div><div class="bar-col" title="2026-09-10：44,214,994 tokens"><div class="bar-val">4421.5 万</div><div class="bar" style="height:15px"></div><div class="bar-day">09-10</div></div><div class="bar-col" title="2026-09-11：66,522,411 tokens"><div class="bar-val">6652.2 万</div><div class="bar" style="height:23px"></div><div class="bar-day">09-11</div></div><div class="bar-col" title="2026-09-14：75,162,893 tokens"><div class="bar-val">7516.3 万</div><div class="bar" style="height:27px"></div><div class="bar-day">09-14</div></div><div class="bar-col" title="2026-09-15：98,936,187 tokens"><div class="bar-val">9893.6 万</div><div class="bar" style="height:35px"></div><div class="bar-day">09-15</div></div><div class="bar-col" title="2026-09-17：70,944,121 tokens"><div class="bar-val">7094.4 万</div><div class="bar" style="height:25px"></div><div class="bar-day">09-17</div></div><div class="bar-col" title="2026-09-18：298,083,436 tokens"><div class="bar-val">2.98 亿</div><div class="bar" style="height:107px"></div><div class="bar-day">09-18</div></div><div class="bar-col" title="2026-09-19：86,042,603 tokens"><div class="bar-val">8604.3 万</div><div class="bar" style="height:30px"></div><div class="bar-day">09-19</div></div><div class="bar-col" title="2026-09-20：417,318,944 tokens"><div class="bar-val">4.17 亿</div><div class="bar" style="height:150px"></div><div class="bar-day">09-20</div></div><div class="bar-col" title="2026-09-21：118,898,718 tokens"><div class="bar-val">1.19 亿</div><div class="bar" style="height:42px"></div><div class="bar-day">09-21</div></div><div class="bar-col" title="2026-09-22：42,323,623 tokens"><div class="bar-val">4232.4 万</div><div class="bar" style="height:15px"></div><div class="bar-day">09-22</div></div></div>
+  </section>
+
+  <section>
+    <h2>按模型</h2>
+    <table>
+      <thead><tr><th>模型</th><th class="num">调用</th><th class="num">token</th><th class="num">约</th></tr></thead>
+      <tbody><tr><td>DeepSeek-V4.1-Flash</td><td class='num'>5,341</td><td class='num'>1,318,447,930</td><td class='num'>13.18 亿</td></tr><tr><td>DeepSeek-V4-Pro</td><td class='num'>116</td><td class='num'>6,724,857</td><td class='num'>672.5 万</td></tr></tbody>
+    </table>
+  </section>
+
+  <details class="fold">
+    <summary>用量最高的会话<span class="hint">共 49 个</span></summary>
+    <div class="fold-body">
+      <table>
+        <thead><tr><th></th><th>会话</th><th class="num">token</th><th class="num">约</th></tr></thead>
+        <tbody><tr><td class='rk'>1</td><td>查看最新接力文件内容<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>383,174,666</td><td class='num'>3.83 亿</td></tr><tr><td class='rk'>2</td><td>查看稳定币付款文章交接文档<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>180,046,748</td><td class='num'>1.80 亿</td></tr><tr><td class='rk'>3</td><td>了解飞书自建应用与 MCP 多维表格配置<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>117,910,539</td><td class='num'>1.18 亿</td></tr><tr><td class='rk'>4</td><td>读取本地接力文章<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>86,732,191</td><td class='num'>8673.2 万</td></tr><tr><td class='rk'>5</td><td>用v7.1实现文章和视觉包<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>67,509,432</td><td class='num'>6750.9 万</td></tr><tr><td class='rk'>6</td><td>按文档改进内容工厂<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>59,974,947</td><td class='num'>5997.5 万</td></tr><tr><td class='rk'>7</td><td>复刻 Codex 桌面宠物并替换视觉<div class='sub'>~/WorkBuddy/本地宠物</div></td><td class='num'>52,308,235</td><td class='num'>5230.8 万</td></tr><tr><td class='rk'>8</td><td>迭代YiPex提示词至6.6版本<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>44,214,994</td><td class='num'>4421.5 万</td></tr><tr><td class='rk'>9</td><td>按提示文档完成Codex实现<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>43,197,764</td><td class='num'>4319.8 万</td></tr><tr><td class='rk'>10</td><td>暂停网页任务并测试 workbuddy 方案<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>32,478,447</td><td class='num'>3247.8 万</td></tr><tr><td class='rk'>11</td><td>根据交接文档搭建内容工厂<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>23,993,594</td><td class='num'>2399.4 万</td></tr><tr><td class='rk'>12</td><td>查询本月token用量<div class='sub'>~/WorkBuddy/2026-09-22-16-03-26</div></td><td class='num'>21,570,825</td><td class='num'>2157.1 万</td></tr><tr><td class='rk'>13</td><td>优化文章页面样式<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>16,872,426</td><td class='num'>1687.2 万</td></tr><tr><td class='rk'>14</td><td>回顾昨日内容并确认进度<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>16,328,581</td><td class='num'>1632.9 万</td></tr><tr><td class='rk'>15</td><td>查看跨境贸易批量付款交接文档<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>16,257,718</td><td class='num'>1625.8 万</td></tr><tr><td class='rk'>16</td><td>调整v7.1版本界面文案与权限<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>14,214,176</td><td class='num'>1421.4 万</td></tr><tr><td class='rk'>17</td><td>根据SOP完善YiPex文档内容<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>13,798,353</td><td class='num'>1379.8 万</td></tr><tr><td class='rk'>18</td><td>排查文章输出质量下降与双语问题<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>13,656,895</td><td class='num'>1365.7 万</td></tr><tr><td class='rk'>19</td><td>升级内容工厂至V1.6<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>13,629,567</td><td class='num'>1363.0 万</td></tr><tr><td class='rk'>20</td><td>测试助手能力<div class='sub'>~/WorkBuddy/Claw</div></td><td class='num'>12,603,363</td><td class='num'>1260.3 万</td></tr><tr><td class='rk'>21</td><td>探讨自动发布与登录授权问题<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>11,686,893</td><td class='num'>1168.7 万</td></tr><tr><td class='rk'>22</td><td>通过飞书URL安装插件<div class='sub'>~/WorkBuddy/2026-09-15-17-57-23</div></td><td class='num'>11,315,338</td><td class='num'>1131.5 万</td></tr><tr><td class='rk'>23</td><td>调整界面左右对齐样式<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>7,267,278</td><td class='num'>726.7 万</td></tr><tr><td class='rk'>24</td><td>讨论官网内容更新流程<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>7,159,336</td><td class='num'>715.9 万</td></tr><tr><td class='rk'>25</td><td>修复工厂页面设计对齐问题<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>6,846,548</td><td class='num'>684.7 万</td></tr><tr><td class='rk'>26</td><td>修复任务卡片无法删除的问题<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>6,359,962</td><td class='num'>636.0 万</td></tr><tr><td class='rk'>27</td><td>导出卡片发送给导师<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>6,222,926</td><td class='num'>622.3 万</td></tr><tr><td class='rk'>28</td><td>审核 YiPex 稳定币支付文章并输出意见<div class='sub'>~/Desktop/YiPex</div></td><td class='num'>5,904,544</td><td class='num'>590.5 万</td></tr><tr><td class='rk'>29</td><td>将PDF转为docx并飞书发送<div class='sub'>~/WorkBuddy/2026-09-22-10-53-43</div></td><td class='num'>4,725,290</td><td class='num'>472.5 万</td></tr><tr><td class='rk'>30</td><td>询问能否直接操作电脑<div class='sub'>~/WorkBuddy/2026-09-08-11-18-17</div></td><td class='num'>4,106,970</td><td class='num'>410.7 万</td></tr><tr><td class='rk'>31</td><td>排查图片中的报错问题<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>4,087,176</td><td class='num'>408.7 万</td></tr><tr><td class='rk'>32</td><td>审阅全球发薪方案审查文件<div class='sub'>~/Desktop/YiPex</div></td><td class='num'>2,486,258</td><td class='num'>248.6 万</td></tr><tr><td class='rk'>33</td><td>测试新要求落地与联网工具使用<div class='sub'>~/WorkBuddy/2026-09-22-14-29-58</div></td><td class='num'>2,271,773</td><td class='num'>227.2 万</td></tr><tr><td class='rk'>34</td><td>WorkBuddy插件接口与开发方式<div class='sub'>~/WorkBuddy/2026-09-08-11-26-13</div></td><td class='num'>2,239,421</td><td class='num'>223.9 万</td></tr><tr><td class='rk'>35</td><td>总结模型优劣并评价DeepSeek V4.1<div class='sub'>~/WorkBuddy/2026-09-21-17-12-49</div></td><td class='num'>2,176,447</td><td class='num'>217.6 万</td></tr><tr><td class='rk'>36</td><td>自动化密钥风险问题<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>1,971,418</td><td class='num'>197.1 万</td></tr><tr><td class='rk'>37</td><td>推荐适合DeepSeek使用的模型<div class='sub'>~/WorkBuddy/2026-09-14-16-02-38</div></td><td class='num'>1,748,917</td><td class='num'>174.9 万</td></tr><tr><td class='rk'>38</td><td>将助手连接到手机的方法<div class='sub'>~/WorkBuddy/2026-09-20-10-59-44</div></td><td class='num'>1,232,638</td><td class='num'>123.3 万</td></tr><tr><td class='rk'>39</td><td>继续完成数法一体化账户二审<div class='sub'>~/Desktop/YiPex</div></td><td class='num'>1,143,847</td><td class='num'>114.4 万</td></tr><tr><td class='rk'>40</td><td>审阅新md文件文章<div class='sub'>~/Desktop/YiPex</div></td><td class='num'>1,074,031</td><td class='num'>107.4 万</td></tr><tr><td class='rk'>41</td><td>审阅 YiPex 稳定币支付文章<div class='sub'>~/Desktop/YiPex</div></td><td class='num'>812,236</td><td class='num'>81.2 万</td></tr><tr><td class='rk'>42</td><td>解释剪贴板截图内容<div class='sub'>~/Desktop/yipex网页设计</div></td><td class='num'>529,784</td><td class='num'>53.0 万</td></tr><tr><td class='rk'>43</td><td>金融机构入网的翻译<div class='sub'>~/WorkBuddy/2026-09-20-17-15-42</div></td><td class='num'>484,883</td><td class='num'>48.5 万</td></tr><tr><td class='rk'>44</td><td>解决Xcode安装配置失败问题<div class='sub'>~/WorkBuddy/2026-09-08-15-01-51</div></td><td class='num'>267,090</td><td class='num'>26.7 万</td></tr><tr><td class='rk'>45</td><td>YiPex 收线索链路每日巡检<div class='sub'>~/Desktop/yipex网页设计/yipex-v7.1</div></td><td class='num'>228,884</td><td class='num'>22.9 万</td></tr><tr><td class='rk'>46</td><td>YiPex 收线索链路每日巡检<div class='sub'>~/Desktop/yipex网页设计/yipex-v7.1</div></td><td class='num'>126,168</td><td class='num'>12.6 万</td></tr><tr><td class='rk'>47</td><td>测试会话<div class='sub'>~/WorkBuddy/2026-09-08-15-33-33</div></td><td class='num'>111,376</td><td class='num'>11.1 万</td></tr><tr><td class='rk'>48</td><td>咨询AI作为备用模型可行性<div class='sub'>~/WorkBuddy/2026-09-15-16-24-27</div></td><td class='num'>76,422</td><td class='num'>7.6 万</td></tr><tr><td class='rk'>49</td><td>输入数字 111<div class='sub'>~/WorkBuddy/2026-09-20-16-55-00</div></td><td class='num'>35,472</td><td class='num'>3.5 万</td></tr></tbody>
+      </table>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>按天明细　·　按项目<span class="hint">明细</span></summary>
+    <div class="fold-body">
+      <div class="cols">
+        <div>
+          <h3 class="mini">按天明细</h3>
+          <table>
+            <thead><tr><th>日期</th><th class="num">token</th><th class="num">约</th></tr></thead>
+            <tbody><tr><td>2026-09-08</td><td class='num'>6,724,857</td><td class='num'>672.5 万</td></tr><tr><td>2026-09-10</td><td class='num'>44,214,994</td><td class='num'>4421.5 万</td></tr><tr><td>2026-09-11</td><td class='num'>66,522,411</td><td class='num'>6652.2 万</td></tr><tr><td>2026-09-14</td><td class='num'>75,162,893</td><td class='num'>7516.3 万</td></tr><tr><td>2026-09-15</td><td class='num'>98,936,187</td><td class='num'>9893.6 万</td></tr><tr><td>2026-09-17</td><td class='num'>70,944,121</td><td class='num'>7094.4 万</td></tr><tr><td>2026-09-18</td><td class='num'>298,083,436</td><td class='num'>2.98 亿</td></tr><tr><td>2026-09-19</td><td class='num'>86,042,603</td><td class='num'>8604.3 万</td></tr><tr><td>2026-09-20</td><td class='num'>417,318,944</td><td class='num'>4.17 亿</td></tr><tr><td>2026-09-21</td><td class='num'>118,898,718</td><td class='num'>1.19 亿</td></tr><tr><td>2026-09-22</td><td class='num'>42,323,623</td><td class='num'>4232.4 万</td></tr></tbody>
+          </table>
+        </div>
+        <div>
+          <h3 class="mini">按项目</h3>
+          <table>
+            <thead><tr><th>项目目录</th><th class="num">token</th><th class="num">约</th></tr></thead>
+            <tbody><tr><td>Users-c0437-Desktop-yipex网页设计</td><td class='num'>1,196,122,359</td><td class='num'>11.96 亿</td></tr><tr><td>Users-c0437-WorkBuddy-本地宠物</td><td class='num'>52,308,235</td><td class='num'>5230.8 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-22-16-03-26</td><td class='num'>21,570,825</td><td class='num'>2157.1 万</td></tr><tr><td>Users-c0437-WorkBuddy-Claw</td><td class='num'>12,603,363</td><td class='num'>1260.3 万</td></tr><tr><td>Users-c0437-Desktop-YiPex</td><td class='num'>11,420,916</td><td class='num'>1142.1 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-15-17-57-23</td><td class='num'>11,315,338</td><td class='num'>1131.5 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-22-10-53-43</td><td class='num'>4,725,290</td><td class='num'>472.5 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-08-11-18-17</td><td class='num'>4,106,970</td><td class='num'>410.7 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-22-14-29-58</td><td class='num'>2,271,773</td><td class='num'>227.2 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-08-11-26-13</td><td class='num'>2,239,421</td><td class='num'>223.9 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-21-17-12-49</td><td class='num'>2,176,447</td><td class='num'>217.6 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-14-16-02-38</td><td class='num'>1,748,917</td><td class='num'>174.9 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-20-10-59-44</td><td class='num'>1,232,638</td><td class='num'>123.3 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-20-17-15-42</td><td class='num'>484,883</td><td class='num'>48.5 万</td></tr><tr><td>Users-c0437-Desktop-yipex网页设计-yipex-v7.1</td><td class='num'>355,052</td><td class='num'>35.5 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-08-15-01-51</td><td class='num'>267,090</td><td class='num'>26.7 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-08-15-33-33</td><td class='num'>111,376</td><td class='num'>11.1 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-15-16-24-27</td><td class='num'>76,422</td><td class='num'>7.6 万</td></tr><tr><td>Users-c0437-WorkBuddy-2026-09-20-16-55-00</td><td class='num'>35,472</td><td class='num'>3.5 万</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </details>
+
+  <footer>数据来源：WorkBuddy 本地会话记录（每次调用的输入 / 输出 token）</footer>
+</div>
+
+<div class="mascot" id="mascot" title="点我一下">
+  <div class="bubble" id="bubble"></div>
+  <div class="stage" id="stage">
+    <img src="assets/front.png" class="on" alt="DeepSeek 看板娘">
+    <img src="assets/left.png" alt="DeepSeek 看板娘 侧视">
+    <img src="assets/back.png" alt="DeepSeek 看板娘 背面">
+    <img src="assets/right.png" alt="DeepSeek 看板娘 侧视">
+  </div>
+</div>
+
+<script>
+(function(){
+  var LINES = ["本月累计 13.25 亿 token 啦～", "最多的一天是 09-20，4.17 亿！", "我们连续 6 天都见面了～", "5,457 次调用，辛苦你啦", "最长一次陪你聊了 28 小时 6 分 呢", "这个月有 11 天你来找过我", "峰值那天是 2026-09-20，好忙呀"];
+  var views = Array.prototype.slice.call(document.querySelectorAll("#stage img"));
+  var bubble = document.getElementById("bubble");
+  var mascot = document.getElementById("mascot");
+  var li = 0, busy = false, hideTimer = null;
+
+  function say(text){
+    bubble.textContent = text;
+    bubble.classList.add("show");
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(function(){ bubble.classList.remove("show"); }, 4600);
+  }
+  function show(i){
+    views.forEach(function(v, k){ v.classList.toggle("on", k === i); });
+  }
+
+  mascot.addEventListener("click", function(){
+    if (busy) return;
+    busy = true;
+    var seq = [1, 2, 3, 0], step = 0;
+    var timer = setInterval(function(){
+      show(seq[step++]);
+      if (step >= seq.length){ clearInterval(timer); busy = false; }
+    }, 200);
+    say(LINES[li++ % LINES.length]);
+  });
+
+  // 进页面先打个招呼
+  setTimeout(function(){ say(LINES[li++ % LINES.length]); }, 800);
+})();
+</script>
+</body>
+</html>

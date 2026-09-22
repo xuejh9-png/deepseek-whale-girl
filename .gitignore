@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+._*
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 生成过程中的临时文件
+*.tmp
+用量报告.html.tmp
+
+# 编辑器
+.vscode/
+.idea/
