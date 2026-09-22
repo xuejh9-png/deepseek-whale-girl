@@ -303,9 +303,9 @@ def build_html(agg, title, meta):
         "最多的一天是 %s，%s！" % (agg["peak_day"][5:], human(agg["peak_val"])),
         "我们连续 %d 天都见面了～" % agg["streak_cur"],
         "%s 次调用，辛苦你啦" % comma(agg["calls"]),
-        "最长一次陪你聊了 %s 呢" % fmt_dur(agg["longest_sec"]),
+        "有一次我们聊了 %s 呢" % fmt_dur(agg["longest_sec"]),
         "这个月有 %d 天你来找过我" % agg["active_days"],
-        "峰值那天是 %s，好忙呀" % agg["peak_day"],
+        "最长连着 %d 天，好厉害！" % agg["streak_best"],
     ]
 
     # 按天柱状
@@ -451,7 +451,7 @@ def build_html(agg, title, meta):
   @media (max-width:1340px){
     .wrap{padding-right:172px}
     .mascot .stage{height:152px;width:104px}
-    .mascot .bubble{max-width:172px;font-size:11px}
+    .mascot .bubble{max-width:196px;font-size:11px}
   }
   @media (max-width:880px){
     .mascot{display:none}
