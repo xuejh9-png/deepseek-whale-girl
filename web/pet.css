@@ -77,19 +77,26 @@ html, body {
   background-image: url(../assets/pet/idle.png);
   background-repeat: no-repeat;
   background-size: calc(var(--pet-cell-w) * 6) calc(var(--pet-cell-h) * 4);
-  background-position: 0 0;              /* 第 1 帧 */
+  background-position: 0 0;              /* 第 1 帧；运行时按帧号驱动 */
   pointer-events: none;
+  /* 拖拽倾斜：素材画的是中性悬垂，方向由运行时按拖动方向做 */
+  transform-origin: 50% 90%;             /* = 脚底锚点，倾斜才自然 */
+  transform: rotate(var(--pet-tilt, 0deg));
+  transition: transform .18s ease-out;
 }
 
-/* ---------- 状态 → 角色姿态 ----------
-   当前是整图变换的过渡实现；S2 换成动画剪辑后，这里只保留"状态兜底姿态"。 */
-.pet[data-state="thinking"] .pet-inner { transform: rotate(-2.5deg); }
-.pet[data-state="working"]  .pet-inner { animation: petWork 1.15s ease-in-out infinite; }
-.pet[data-state="success"]  .pet-inner { animation: petJump .62s cubic-bezier(.3, 1.4, .5, 1); }
-.pet[data-state="error"]    .pet-inner { animation: petShake .5s ease; }
-.pet[data-state="waiting"]  .pet-inner { transform: rotate(1.6deg); }
-.pet[data-state="sleeping"] .pet-inner { transform: scaleY(.94) translateY(5px); }
-.pet[data-state="offline"]  .pet-inner { transform: scaleY(.94) translateY(5px); opacity: .8; }
+/* ---------- 状态 → 角色姿态（**仅兜底**） ----------
+   运行时找到对应剪辑时会播真动画，并把 data-fallback 置为 "0"，
+   下面这些整图变换就全部不生效 —— 避免两套动画打架。
+   等第 2/3 批素材（click/jump/drag/success/error/sleep）到位后，
+   这里的规则会逐步失效，可以整块删掉。 */
+.pet[data-fallback="1"][data-state="thinking"] .pet-inner { transform: rotate(-2.5deg); }
+.pet[data-fallback="1"][data-state="working"]  .pet-inner { animation: petWork 1.15s ease-in-out infinite; }
+.pet[data-fallback="1"][data-state="success"]  .pet-inner { animation: petJump .62s cubic-bezier(.3, 1.4, .5, 1); }
+.pet[data-fallback="1"][data-state="error"]    .pet-inner { animation: petShake .5s ease; }
+.pet[data-fallback="1"][data-state="waiting"]  .pet-inner { transform: rotate(1.6deg); }
+.pet[data-fallback="1"][data-state="sleeping"] .pet-inner,
+.pet[data-fallback="1"][data-state="offline"]  .pet-inner { transform: scaleY(.94) translateY(5px); opacity: .8; }
 
 @keyframes petWork {
   0%, 100% { transform: rotate(-1.4deg); }

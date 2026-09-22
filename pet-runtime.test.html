@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"><title>pet-runtime-selftest</title>
+<link rel="stylesheet" href="web/pet.css">
+</head><body>
+
+<!-- 动画运行时回归测试。
+     直接双击用浏览器打开即可（不需要 daemon），结果写在 document.title。
+     合成 manifest 覆盖三类情形：循环剪辑 / 一次性剪辑 / 缺失剪辑。 -->
+
+<div class="pet" id="pet" data-state="idle">
+  <div class="pet-body" id="petBody">
+    <div class="pet-inner"><div class="pet-sprite" id="petSprite"></div></div>
+    <div class="pet-fx">
+      <span class="fx-dots"><i></i><i></i><i></i></span>
+      <span class="fx-ring"></span><span class="fx-mark">!</span><span class="fx-check">✓</span>
+    </div>
+  </div>
+</div>
+
+<script src="web/pet-runtime.js"></script>
+<script>
+(function () {
+  var out = [], P = 1, F = 0;
+  var PNG = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';   // 1px，避免网络依赖
+
+  function ok(name, cond, got) {
+    if (cond) { P++; } else { F++; out.push('FAIL:' + name + '(' + got + ')'); }
+  }
+
+  var MAN = {
+    version: 4,
+    spriteSheet: { frameWidth: 320, frameHeight: 400, columns: 6 },
+    clips: {
+      idle:  { file: PNG, frameCount: 20, rows: 4, fps: 10, loop: true,  loopStart: 1,  loopEnd: 20 },
+      work:  { file: PNG, frameCount: 12, rows: 2, fps: 10, loop: true,  loopStart: 5,  loopEnd: 12 },
+      sleep: { file: PNG, frameCount: 12, rows: 2, fps: 6,  loop: true,  loopStart: 9,  loopEnd: 12 },
+      click: { file: PNG, frameCount: 8,  rows: 2, fps: 12, loop: false, loopStart: null, loopEnd: null },
+      jump:  { file: PNG, frameCount: 14, rows: 3, fps: 14, loop: false, loopStart: null, loopEnd: null, airborneFrame: 7 }
+    }
+  };
+
+  var anim = new PetAnimation({
+    spriteEl: document.getElementById('petSprite'),
+    rootEl: document.getElementById('pet'),
+    basePath: '', manifestUrl: 'data:application/json,{}'
+  });
+  anim.manifest = MAN;
+
+  function tick(ms, step) {
+    step = step || 10;
+    for (var t = 0; t < ms; t += step) anim.tick(step);
+  }
+
+  anim.playClip('idle');
+  tick(1000);
+  ok('idle 1 秒推进 10 帧', anim.frame === 10, anim.frame);
+
+  tick(1000);
+  ok('idle 回卷到第 1 帧', anim.frame >= 0 && anim.frame < 20, anim.frame);
+
+  anim.playClip('work');
+  anim.frame = 11;
+  tick(100);
+  ok('work 末帧(12)→循环段首帧(5)', anim.frame === 4, anim.frame);
+
+  var early = false;
+  anim.frame = 4;
+  for (var i = 0; i < 40; i++) { tick(100); if (anim.frame < 4) early = true; }
+  ok('work 全程不进开场段(1-4)', !early, anim.frame);
+
+  anim.playClip('sleep');
+  anim.frame = 11; tick(1000 / 6 + 1);
+  ok('sleep 回卷到第 9 帧', anim.frame === 8, anim.frame);
+
+  anim.setState('idle');
+  anim.playClip('click', { once: true });
+  var reachedLast = false, returned = false;
+  for (var k = 0; k < 300; k++) {
+    anim.tick(10);
+    if (anim.clipName === 'click' && anim.frame === 7) reachedLast = true;
+    if (anim.clipName === 'idle' && anim.action === null) { returned = true; break; }
+  }
+  ok('click 播到过末帧(第8帧)', reachedLast, anim.frame);
+  ok('click 播完自动回到 idle', returned, anim.clipName + '/' + anim.action);
+
+  anim.setState('success');
+  ok('缺剪辑退化为 idle', anim.clipName === 'idle', anim.clipName);
+  ok('缺剪辑时 data-fallback=1', anim.root.dataset.fallback === '1', anim.root.dataset.fallback);
+
+  anim.setState('working');
+  ok('有剪辑时 data-fallback=0', anim.root.dataset.fallback === '0', anim.root.dataset.fallback);
+  ok('working 映射到 work', anim.clipName === 'work', anim.clipName);
+
+  anim.setState('thinking');
+  var before = anim.clipName;
+  anim.trigger('clicked', true);
+  ok('触发动作后切到 click', anim.clipName === 'click', anim.clipName);
+  tick(2000);
+  ok('动作播完回到状态剪辑', anim.clipName === before, anim.clipName);
+
+  anim.trigger('released', true);
+  ok('released 从第 7 帧起播', anim.frame === 6, anim.frame);
+
+  var n0 = anim.clipName;
+  anim.trigger('runLeft', true);
+  ok('无素材的动作被跳过', anim.clipName === n0, anim.clipName);
+
+  document.title = 'RESULT|PASS=' + P + '|FAIL=' + F + (out.length ? '|' + out.join('|') : '|ALL_OK');
+})();
+</script>
+</body></html>

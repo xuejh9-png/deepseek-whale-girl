@@ -1,10 +1,11 @@
 /* ============================================================
-   WorkBuddy Pet —— 行为层（桌面宠物）
-   职责只有两件：
-     1. 把 /state 的 agent.state 映射成角色的 data-state
-     2. 把鼠标事件转给原生宿主（拖拽由 Swift 移动窗口）
-   不显示任何 Token / Context / Model —— 那些不属于宠物。
-   没有任何随机朝向 / 随机姿势。
+   WorkBuddy Pet —— 胶水层
+   ------------------------------------------------------------
+   这一层只做四件事，不含动画逻辑（动画在 pet-runtime.js）：
+     1. 建运行时、开 rAF 循环（唯一的定时源）
+     2. 拉 /state → 喂给状态机
+     3. 指针事件 → 触发动作
+     4. 桌面宿主（Swift）的消息桥
    ============================================================ */
 (function () {
   'use strict';
@@ -14,13 +15,14 @@
 
   var body = document.getElementById('petBody');
 
-  // 通过 daemon 打开时用同源；直接用 file:// 打开调试时连本地默认端口
+  // 通过 daemon 打开时用同源；file:// 调试时连本地默认端口
   var API = /^https?:$/.test(location.protocol) ? '' : 'http://127.0.0.1:8791';
   var POLL_MS = 2500;
 
-  // Swift 宿主注入的桥；纯浏览器调试时为 null
+  // Swift 宿主注入的桥；纯浏览器里为 null
   var host = (window.webkit && window.webkit.messageHandlers &&
               window.webkit.messageHandlers.petHost) || null;
+  var IS_DESKTOP = !!host;
 
   function tell(cmd, extra) {
     if (!host) return;
@@ -31,49 +33,84 @@
     try { host.postMessage(msg); } catch (e) {}
   }
 
-  /* ---------------- 状态映射 ---------------- */
-  var KNOWN = {
-    idle: 1, thinking: 1, working: 1, success: 1, waiting: 1,
-    error: 1, sleeping: 1, offline: 1
-  };
+  /* ---------------- 动画运行时 ---------------- */
 
-  function setState(s) {
-    if (!s || !KNOWN[s]) s = 'idle';
-    if (pet.dataset.state === s) return;
-    pet.dataset.state = s;
+  var anim = new window.PetAnimation({
+    spriteEl: document.getElementById('petSprite'),
+    rootEl: pet,
+    basePath: 'assets/pet/',
+    manifestUrl: 'assets/pet/manifest.json'
+  });
+
+  anim.init().then(function () {
+    pet.dataset.state = 'idle';
+    anim.setState('idle');
+    startLoop();
+  });
+
+  // 唯一的定时源：rAF + 时间累积。页面隐藏时停掉，回来再续。
+  var last = 0, running = false, ticks = 0;
+
+  function frame(now) {
+    if (!running) return;
+    var dt = last ? (now - last) : 16;
+    last = now;
+    if (dt > 250) dt = 250;        // 长时间挂起后不要一次补很多帧
+    anim.tick(dt);
+    pet.dataset.ticks = (++ticks);  // 便于外部验证 rAF 是否在跑
+    requestAnimationFrame(frame);
   }
 
-  /* ---------------- 轮询 ---------------- */
+  function startLoop() {
+    if (running) return;
+    running = true;
+    last = 0;
+    requestAnimationFrame(frame);
+  }
+
+  function stopLoop() { running = false; }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) stopLoop();
+    else startLoop();
+  });
+
+  // 窗口尺寸变化时单格像素尺寸会变，要重算 sheet 缩放
+  window.addEventListener('resize', function () { anim.relayout(); });
+
+  /* ---------------- 状态拉取 ---------------- */
+
   var timer = null;
 
   function poll() {
     fetch(API + '/state', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (s) {
-        setState(((s || {}).agent || {}).state);
-      })
-      .catch(function () { setState('offline'); });
+      .then(function (s) { anim.setState(((s || {}).agent || {}).state); })
+      .catch(function () { anim.setState('offline'); });
   }
 
-  function start() {
+  function startPolling() {
     if (timer) return;
     poll();
     timer = setInterval(poll, POLL_MS);
   }
 
-  function stop() {
-    if (timer) { clearInterval(timer); timer = null; }
-  }
-
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) { stop(); setState('sleeping'); }
-    else { start(); }
+    if (document.hidden) { if (timer) { clearInterval(timer); timer = null; } }
+    else startPolling();
   });
 
-  /* ---------------- 拖拽 ----------------
-     桌面模式下位移由原生窗口负责，这里只负责"告诉宿主正在拖"。
-     角色本体的抓起/落地反应在 S2 由动画剪辑接管。 */
-  var drag = { on: false, moved: false, sx: 0, sy: 0 };
+  startPolling();
+
+  /* ---------------- 指针 → 动作 ---------------- */
+
+  var drag = { on: false, moved: false, sx: 0, sy: 0, lastScreenX: 0 };
+
+  // 拖拽倾斜：素材画的是中性悬垂，"往哪边拖就倾向哪边"由运行时做
+  function setTilt(deg) {
+    var d = Math.max(-12, Math.min(12, deg));
+    pet.style.setProperty('--pet-tilt', d.toFixed(1) + 'deg');
+  }
 
   body.addEventListener('pointerdown', function (e) {
     if (e.button !== 0) return;
@@ -81,6 +118,7 @@
     drag.moved = false;
     drag.sx = e.clientX;
     drag.sy = e.clientY;
+    drag.lastScreenX = e.screenX;
     try { body.setPointerCapture(e.pointerId); } catch (err) {}
     pet.classList.add('dragging');
     tell('dragBegin');
@@ -89,28 +127,49 @@
   document.addEventListener('pointermove', function (e) {
     if (!drag.on) return;
     var dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
-    if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 4) {
+      drag.moved = true;
+      anim.trigger('grabbed', true);
+    }
     if (!drag.moved) return;
     e.preventDefault();
-    tell('dragMove');
+
+    // 桌面模式窗口跟着指针走，clientX 不变 → 用屏幕坐标算方向
+    var sx = e.screenX;
+    var vx = sx - drag.lastScreenX;
+    drag.lastScreenX = sx;
+    setTilt(-vx * 1.6);
+
+    if (IS_DESKTOP) tell('dragMove');
   }, { passive: false });
 
   document.addEventListener('pointerup', function () {
     if (!drag.on) return;
     drag.on = false;
     pet.classList.remove('dragging');
+    setTilt(0);
     tell('dragEnd');
-    // 没移动 = 点击。S1 不做任何 UI 反应，只把事件抛给宿主。
-    if (!drag.moved) tell('clicked');
+
+    if (drag.moved) {
+      anim.trigger('released', true);      // 松开 → 下落 + 落地
+    } else {
+      anim.trigger('clicked', true);       // 没移动 = 点击 → 角色反应
+      tell('clicked');
+    }
   });
 
-  // 右键 → 原生轻量菜单（置顶 / 退出）
-  document.addEventListener('contextmenu', function (e) {
+  // 指针离开窗口 / 被取消时也要收尾，否则会卡在 dragging
+  document.addEventListener('pointercancel', function () {
+    if (!drag.on) return;
+    drag.on = false;
+    pet.classList.remove('dragging');
+    setTilt(0);
+    tell('dragEnd');
+  });
+
+  pet.addEventListener('contextmenu', function (e) {
+    if (!IS_DESKTOP) return;
     e.preventDefault();
     tell('menu');
   });
-
-  /* ---------------- 启动 ---------------- */
-  pet.dataset.state = 'idle';
-  start();
 })();
