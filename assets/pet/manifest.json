@@ -1,0 +1,44 @@
+{
+  "version": 4,
+  "spriteSheet": {
+    "frameWidth": 320,
+    "frameHeight": 400,
+    "columns": 6,
+    "layout": "row-major",
+    "gap": 0,
+    "anchorX": 0.5,
+    "anchorY": 0.9,
+    "groundLineY": 0.9,
+    "characterHeight": 256,
+    "background": "transparent-rgba"
+  },
+  "clips": {
+    "idle": {
+      "file": "idle.png",
+      "frameCount": 20,
+      "rows": 4,
+      "fps": 10,
+      "loop": true,
+      "loopStart": 1,
+      "loopEnd": 20
+    },
+    "think": {
+      "file": "think.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 8,
+      "loop": true,
+      "loopStart": 5,
+      "loopEnd": 12
+    },
+    "work": {
+      "file": "work.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 10,
+      "loop": true,
+      "loopStart": 5,
+      "loopEnd": 12
+    }
+  }
+}

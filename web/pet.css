@@ -27,6 +27,9 @@ html, body {
   --pet-aspect: 0.8;
   /* 由上面推导，不要直接改 */
   --pet-canvas-height: calc(var(--pet-char-height) / var(--pet-char-in-canvas));
+  /* 单格显示尺寸（= 画布尺寸） */
+  --pet-cell-w: calc(var(--pet-canvas-height) * var(--pet-aspect));
+  --pet-cell-h: var(--pet-canvas-height);
 }
 
 /* ---------- 舞台：画布正好铺满窗口 ---------- */
@@ -65,13 +68,16 @@ html, body {
   transition: transform .3s cubic-bezier(.34, 1.4, .64, 1);
 }
 
-.pet-inner img {
+/* 精灵图取帧：一张 Sprite Sheet 用 background-position 取单格。
+   网格 6 列 × 4 行（idle 是最大的那张）；换剪辑时改两处 url 与行数即可。
+   S2 会由运行时按帧号改 background-position。 */
+.pet-sprite {
   position: absolute;
-  left: 50%;
-  bottom: 0;
-  height: 100%;
-  width: auto;
-  transform: translateX(-50%);
+  inset: 0;
+  background-image: url(../assets/pet/idle.png);
+  background-repeat: no-repeat;
+  background-size: calc(var(--pet-cell-w) * 6) calc(var(--pet-cell-h) * 4);
+  background-position: 0 0;              /* 第 1 帧 */
   pointer-events: none;
 }
 
