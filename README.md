@@ -92,7 +92,7 @@ python3 usage_stats.py --open       # 生成后自动打开
 | `用量报告.html` | 生成物，每次运行覆盖 |
 | `assets/pet/` | 宠物素材（当前为占位，待新 Asset Pack 替换） |
 | `assets/gen2/` | 角色早期渲染留档 |
-| **`ASSET_SPEC.md`** | **新素材规格书（制作动画素材前必读）** |
+| **`ASSET_SPEC.md`** | **运行时契约**：换素材时必须同步改的参数与验证流程（内部用） |
 
 ---
 
@@ -102,3 +102,6 @@ python3 usage_stats.py --open       # 生成后自动打开
 - `用量报告.html` 是生成物，改它没用，改 `usage_stats.py` 后重新生成。
 - 报告页含会话标题等本地信息，**推 GitHub 前留意仓库可见性**。
 - `desktop/WorkBuddyPet.app` 是编译产物，不进仓库（`build.sh` 会重新生成）。
+- **角色素材的外发规格书在 `~/Desktop/WorkBuddy桌宠_素材规格_给GPT.md`**
+  （自包含版本，可直接交给生成模型）。本仓库的 `ASSET_SPEC.md` 只记运行时契约，
+  两份内容不重复。
