@@ -49,6 +49,7 @@ ALPHA_TH = 128
 WIDTH_MAX = 205
 CHANGE_PX_TH = 8        # 单像素变化超过这个值算"这一像素变了"
 MIN_CHANGED_PX = 20     # 一帧里至少这么多像素变了，才算"姿态不同"
+MIN_VISIBLE_PX = 40     # 实际显示尺寸下，循环段单帧变化不得低于此值（否则肉眼读成静止）
 
 
 def load(path, fw, fh, cols, n):
@@ -63,8 +64,11 @@ def d1(f1, f2):
     """两帧的【平均】像素差。
 
     ⚠️ 局限：会被大面积静止区域稀释。
-    "只有几根手指在动"这种刻意做轻的动作，平均差会接近 0 而看不出来
+    只有末端肢体（手指）参与的动画，平均差会接近 0 而看不出来
     —— 所以判断"姿态是否不同"必须用下面的 changed_px()。
+
+    注：这类"每帧只动几个像素"的动作**本身就不该交付**（见 display_changes 的可见性
+    下限）；但脚本仍要能把它和"完全没动"区分开，所以口径必须是像素个数。
     """
     m = (f1[0] > ALPHA_TH) | (f2[0] > ALPHA_TH)
     if m.sum() == 0:
@@ -82,6 +86,34 @@ def changed_px(f1, f2):
     """
     return int((np.abs(f1[1][:, :, :3].astype(int) - f2[1][:, :, :3].astype(int))
                 .max(axis=2) > CHANGE_PX_TH).sum())
+
+
+def display_changes(path, fw, fh, cols, ls, le):
+    """循环段在【实际显示尺寸】下的逐帧变化像素数。
+
+    ⚠️ 为什么必须单独算一遍（2026-09-23 补）：
+    上面的 changed_px() 数的是 320×400 **原画布**上的像素。work 返工版每帧
+    变 26~73px，按 MIN_CHANGED_PX=20 判定"8/8 姿态全过" —— 验收通过。
+    但运行时角色是 0.5 倍显示（160×200），同样的动作缩掉 3/4 面积后
+    只剩 8~14 个屏幕像素，低于人眼可察觉阈值，用户看到的就是"完全不动"。
+
+    姿态判定回答的是「有没有变」，这里回答的是「变得看不看得见」。
+    前者过不等于后者过 —— 这就是 work 那种"做废了的动作"能溜过验收的原因。
+    """
+    im = Image.open(path).convert("RGBA")
+    half = im.resize((im.width // 2, im.height // 2), Image.LANCZOS)
+    fw2, fh2 = fw // 2, fh // 2
+
+    def cell(i):
+        r, c = divmod(i, cols)
+        return np.array(half.crop((c * fw2, r * fh2, (c + 1) * fw2, (r + 1) * fh2))
+                        .convert("RGB")).astype(int)
+
+    out = []
+    for i in range(ls, le):
+        a, b = cell(i - 1), cell(i)
+        out.append(int((np.abs(a - b).max(axis=2) > CHANGE_PX_TH).sum()))
+    return out
 
 
 def main():
@@ -195,10 +227,18 @@ def main():
             chg = [changed_px(frames[i-1], frames[i]) for i in range(ls, le)]
             uniq = 1 + sum(1 for c in chg if c > MIN_CHANGED_PX)
             total = le - ls + 1
+            # 「有没有变」≠「看不看得见」：再按实际显示尺寸量一遍
+            dchg = display_changes(os.path.join(root, m["file"]), FW, FH, COLS, ls, le)
             note = (f"循环 {ls}-{le} 接缝 {seam:.2f} 姿态 {uniq}/{total} "
-                    f"帧间变化 {min(chg)}~{max(chg)}px")
+                    f"帧间变化 {min(chg)}~{max(chg)}px"
+                    f" | 显示尺寸 {min(dchg)}~{max(dchg)}px")
             if uniq < total / 3:
                 warns.append(f"{clip}: 循环段只有 {uniq} 个不同姿态（共 {total} 帧）→ 近似二值切换")
+            if max(dchg) < MIN_VISIBLE_PX:
+                fails.append(
+                    f"{clip}: 循环段在实际显示尺寸（{FW//2}×{FH//2}）下每帧只变 "
+                    f"{min(dchg)}~{max(dchg)}px（阈值 {MIN_VISIBLE_PX}）"
+                    f" → 运行时会被人眼读成「完全不动」，等于没做动画")
         else:
             if "idle" in data:
                 i1 = data["idle"]["frames"][0]
