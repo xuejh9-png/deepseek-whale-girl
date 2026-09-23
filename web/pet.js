@@ -83,17 +83,40 @@
 
   var timer = null;
 
+  /* ---------------- 睡着时被惊动：起身 + 保持清醒 ----------------
+     不做这个的话，点她一下 → 醒一下 → 下一个轮询又把她按回去睡，
+     看起来就是"点了没用"（用户反馈："她被我打醒了，但是不动就又睡着了"）。
+
+     起身**不需要新素材**：sleep 的开场段是"躺下去"（1→8），
+     把当前帧往回倒放就是"站起来"。姿势天然对得上，因为是同一组图。 */
+
+  // 被碰过之后至少清醒这么久才可能再睡。
+  // 可用 ?wakeMs=900 或 #wakeMs=900 覆盖 —— 只有一个目的：让回归测试
+  // 能在几秒内跑完"睡着 → 点醒 → 待机 → 又睡着"整轮循环。
+  var WAKE_MS = (function () {
+    var m = /[?&#]wakeMs=(\d+)/.exec(location.search + location.hash);
+    return m ? parseInt(m[1], 10) : 60000;
+  })();
+  var wakeUntil = 0;
+
+  function awakeNow() { return Date.now() < wakeUntil; }
+
+  // 状态覆盖：睡着但刚被碰过 → 当清醒处理
+  function effectiveState(s) {
+    return (s === 'sleeping' && awakeNow()) ? 'idle' : s;
+  }
+
   function poll() {
     fetch(API + '/state', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (s) {
         var a = (s || {}).agent || {};
-        anim.setState(a.state);
+        anim.setState(effectiveState(a.state));
         // 顺带把状态推给宿主，右键菜单里就能显示"她此刻在干什么"
         tell('state', { state: a.state, label: a.label, task: a.task,
                         source: (s || {}).source });
       })
-      .catch(function () { anim.setState('offline'); tell('state', { state: 'offline' }); });
+      .catch(function () { anim.setState(effectiveState('offline')); tell('state', { state: 'offline' }); });
   }
 
   function startPolling() {
@@ -112,6 +135,7 @@
   /* ---------------- 指针 → 动作 ---------------- */
 
   var drag = { on: false, moved: false, sx: 0, sy: 0, lastScreenX: 0 };
+  var pressWasAsleep = false;
 
   // 拖拽倾斜：素材画的是中性悬垂，"往哪边拖就倾向哪边"由运行时做
   function setTilt(deg) {
@@ -121,6 +145,9 @@
 
   body.addEventListener('pointerdown', function (e) {
     if (e.button !== 0) return;
+    // 任何一次按下都算"你还在"，让她保持清醒一分钟
+    pressWasAsleep = (anim.currentClip() === 'sleep');
+    wakeUntil = Date.now() + WAKE_MS;
     drag.on = true;
     drag.moved = false;
     drag.sx = e.clientX;
@@ -159,6 +186,15 @@
 
     if (drag.moved) {
       anim.trigger('released', true);      // 松开 → 下落 + 落地
+    } else if (pressWasAsleep) {
+      // 她在睡 → 起身。顺序很重要：
+      //   ① 先 trigger（占住 action，播倒放的 sleep）
+      //   ② 再把状态改成 idle —— 此时 action 非空，setState 不会立刻打断动画，
+      //      但已经把"目标状态"改了，起身播完 applyState 就会接 idle 而不是睡回去
+      // 反过来做的话，setState 会立刻切到站立 idle，先跳一下再起身。
+      anim.trigger('wakeUp', true);
+      anim.setState('idle');
+      tell('clicked');
     } else {
       anim.trigger('clicked', true);       // 没移动 = 点击 → 角色反应
       tell('clicked');
@@ -213,6 +249,9 @@
     if (name === 'runStart') {
       // dir < 0 = 向左跑。运行时按 manifest 的 flipForLeft 决定是否翻转。
       anim.trigger(payload.dir < 0 ? 'runLeft' : 'runRight', true);
+    } else if (name === 'runFlip') {
+      // 折返：只改朝向，**不重启剪辑** —— 重启会在折返处看到明显顿挫
+      if (anim.setFacing) anim.setFacing(payload.dir < 0 ? -1 : 1);
     } else if (name === 'runEnd') {
       // run 是循环剪辑，自己永远不会"播完"，必须由宿主显式收尾，
       // 否则她会一直原地跑（和之前 drag 不落地的坑同一个成因）。

@@ -11,6 +11,27 @@ import Carbon.HIToolbox
 
 let DEFAULT_URL = "http://127.0.0.1:8791/"
 
+// MARK: - 日志
+//
+// 系统统一日志（NSLog）在受限环境里读不到（`log: Cannot run while sandboxed`），
+// 而"她怎么突然不见了""右键为什么没反应"这类问题**必须**能从文件里查到原因，
+// 不能靠猜。所以关键动作除 NSLog 之外再写一份到文件。
+let APP_LOG = "/tmp/workbuddy-pet-app.log"
+
+func petLog(_ msg: String) {
+    NSLog("WorkBuddyPet: %@", msg)
+    let ts = ISO8601DateFormatter().string(from: Date())
+    guard let data = "\(ts) \(msg)\n".data(using: .utf8) else { return }
+    if let fh = FileHandle(forWritingAtPath: APP_LOG) {
+        fh.seekToEndOfFile()
+        fh.write(data)
+        try? fh.close()
+    } else {
+        FileManager.default.createFile(atPath: APP_LOG, contents: data)
+    }
+}
+
+
 // MARK: - 网页 → 原生 的指令桥
 
 final class Bridge: NSObject, WKScriptMessageHandler {
@@ -40,8 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var dragStartWin = NSPoint.zero
     var pinned = true
     var moveMonitor: Any?
-    var quitHotKey: EventHotKeyRef?
-    var quitHotKeyHandler: EventHandlerRef?
+    var passTimer: Timer?
+    var hotKeyRefs: [EventHotKeyRef?] = []
+    var hotKeyHandler: EventHandlerRef?
+    var hotKeyActions: [UInt32: () -> Void] = [:]
 
     // 跑动（「回到初始位置」时用 run 剪辑）
     var runTimer: Timer?
@@ -73,40 +96,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)      // 不占 Dock
         bridge.host = self
+        petLog("启动 pid=\(ProcessInfo.processInfo.processIdentifier)")
         buildWindow()
         loadPage()
         watchMouse()
-        installQuitHotKey()
+        installHotKeys()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        petLog("即将退出（保存位置）")
         saveOrigin()
     }
 
-    // MARK: 退出快捷键 ⌥⌘Q
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        petLog("收到退出请求")
+        return .terminateNow
+    }
+
+    // MARK: 全局快捷键
     //
     // 无边框窗口没有系统关闭按钮，之前加过一个"悬停才现的 ×"，
     // 用户反馈它破坏观感 —— 改成全局快捷键：
     // 用 Carbon 注册，**不需要窗口获得焦点**，所以不会把你正在用的窗口抢走。
-    // 另有右键 / 长按 800ms 唤出菜单作为备用入口。
+    //
+    // ⌥⌘Q 退出 ／ ⌥⌘H 跑一下（回初始位置）
+    //
+    // ⚠️ 加 ⌥⌘H 的原因：鼠标那条路（右键菜单）依赖"窗口此刻吃不吃鼠标事件"，
+    // 一旦穿透判定出问题，菜单就点不出来、用户完全不知道该怎么办。
+    // 键盘这条路不经过鼠标命中测试，是**必然可用**的兜底。
 
-    func installQuitHotKey() {
-        let sig = OSType(0x5742_5054)              // 'WBPT'
-        let hotKeyID = EventHotKeyID(signature: sig, id: 1)
-        let mods: UInt32 = UInt32(optionKey | cmdKey)   // ⌥⌘
-        let st = RegisterEventHotKey(UInt32(kVK_ANSI_Q), mods, hotKeyID,
-                                     GetEventDispatcherTarget(), 0, &quitHotKey)
+    func installHotKeys() {
+        registerHotKey(id: 1, key: UInt32(kVK_ANSI_Q), label: "⌥⌘Q 退出") { NSApp.terminate(nil) }
+        registerHotKey(id: 2, key: UInt32(kVK_ANSI_H), label: "⌥⌘H 跑一下") { [weak self] in
+            self?.goHomeOrLap()
+        }
+    }
+
+    func registerHotKey(id: UInt32, key: UInt32, label: String,
+                        action: @escaping () -> Void) {
+        var ref: EventHotKeyRef?
+        let hotKeyID = EventHotKeyID(signature: OSType(0x5742_5054), id: id)   // 'WBPT'
+        let st = RegisterEventHotKey(key, UInt32(optionKey | cmdKey), hotKeyID,
+                                     GetEventDispatcherTarget(), 0, &ref)
         guard st == noErr else {
-            NSLog("WorkBuddyPetPANIC: 快捷键注册失败(\(st))，请用右键菜单退出")
+            petLog("⚠️ 快捷键注册失败（\(label), err=\(st)）")
             return
         }
-        NSLog("WorkBuddyPetOK: 退出快捷键 ⌥⌘Q 已注册")
+        hotKeyRefs.append(ref)
+        hotKeyActions[id] = action
+        petLog("已注册 \(label)")
+
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                  eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetEventDispatcherTarget(), { _, _, _ -> OSStatus in
-            DispatchQueue.main.async { NSApp.terminate(nil) }
-            return noErr
-        }, 1, &spec, nil, &quitHotKeyHandler)
+        // handler 只装一次，靠 hotKeyID 分派
+        if hotKeyHandler == nil {
+            InstallEventHandler(GetEventDispatcherTarget(), { _, event, _ -> OSStatus in
+                var hkID = EventHotKeyID()
+                GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                                  EventParamType(typeEventHotKeyID), nil,
+                                  MemoryLayout<EventHotKeyID>.size, nil, &hkID)
+                DispatchQueue.main.async {
+                    (NSApp.delegate as? AppDelegate)?.hotKeyActions[hkID.id]?()
+                }
+                return noErr
+            }, 1, &spec, nil, &hotKeyHandler)
+        }
     }
 
     // MARK: 窗口
@@ -128,7 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameOrigin(o)
         // 启动时把"位置从哪来"记下来 —— 「关掉再开能回到原位」这个承诺
         // 必须能在外面对着日志验，而不是靠相信代码。
-        NSLog("WorkBuddyPetOK: 窗口起点 x=\(Int(o.x)) y=\(Int(o.y)) 来源=\(restored != nil ? "记忆" : "默认位")")
+        petLog("WorkBuddyPetOK: 窗口起点 x=\(Int(o.x)) y=\(Int(o.y)) 来源=\(restored != nil ? "记忆" : "默认位")")
 
         let cfg = WKWebViewConfiguration()
         cfg.userContentController.add(bridge, name: "petHost")
@@ -254,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let nums = raw.compactMap(doubleOf)
         guard nums.count == 2 else {
-            NSLog("WorkBuddyPetWARN: 记忆的位置格式不对（\(raw)），回落默认位")
+            petLog("WorkBuddyPetWARN: 记忆的位置格式不对（\(raw)），回落默认位")
             return nil
         }
         let p = NSPoint(x: CGFloat(nums[0]), y: CGFloat(nums[1]))
@@ -262,55 +316,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 每条失败路径都要留下日志：静默 return nil 会让「位置记不住」变成
         // 一个查不出来的现象（这次排查就吃过这个亏）
         guard let scr = screenFor(r) else {
-            NSLog("WorkBuddyPetWARN: 记住的位置(\(Int(p.x)),\(Int(p.y)))不在任何屏幕上，回落默认位")
+            petLog("WorkBuddyPetWARN: 记住的位置(\(Int(p.x)),\(Int(p.y)))不在任何屏幕上，回落默认位")
             return nil
         }
         guard let vf = scr.visibleFrame as NSRect? else { return nil }
         let i = r.intersection(vf)
         guard !i.isNull, i.width >= minVisibleW, i.height >= minVisibleH else {
-            NSLog("WorkBuddyPetWARN: 记住的位置(\(Int(p.x)),\(Int(p.y)))只剩 \(Int(i.width))×\(Int(i.height)) 可见，回落默认位")
+            petLog("WorkBuddyPetWARN: 记住的位置(\(Int(p.x)),\(Int(p.y)))只剩 \(Int(i.width))×\(Int(i.height)) 可见，回落默认位")
             return nil
         }
         return p
     }
 
-    // MARK: 跑回初始位置（唯一真正使用 run 剪辑的场合）
+    // MARK: 跑动（唯一真正使用 run 剪辑的场合）
 
-    @objc func goHome() {
+    @objc func goHomeOrLap() {
         dragging = false
         runHome()
     }
 
     func runHome() {
-        let target = clampOrigin(homeOrigin())
+        let home = clampOrigin(homeOrigin())
         var from = window.frame.origin
 
         // 先纵向归位、再横向跑：宠物是"站在地上"的，横着跑才讲得通。
         // 斜着跑会看起来像一边跑一边往上飘。
-        if abs(from.y - target.y) > 1 {
-            from.y = target.y
+        if abs(from.y - home.y) > 1 {
+            from.y = home.y
             window.setFrameOrigin(from)
         }
 
-        let dx = target.x - from.x
-        guard abs(dx) >= 6 else {                     // 已经很近了，别为了几像素跑一趟
-            window.setFrameOrigin(target)
-            saveOrigin()
+        let dx = home.x - from.x
+
+        // ⚠️ 已经在原位时**不能什么都不做**。
+        // 用户点"跑一下"却看到她一动不动，会直接认为功能坏了
+        //（这次的反馈就是"我还是没看见她可以跑"）。
+        // 所以在原位时改成跑个来回 —— 保证这个动作**永远看得见**。
+        guard abs(dx) >= 40 else {
+            let lap = lapAnchor(home: home)
+            petLog("已在原位 → 跑个来回：\(Int(lap.x)) → \(Int(home.x))")
+            startRun(dx: lap.x - from.x, target: lap, continuing: false) { [weak self] in
+                guard let self = self else { return }
+                self.startRun(dx: home.x - self.window.frame.origin.x,
+                              target: home, continuing: true, then: nil)
+            }
             return
         }
-        startRun(dx: dx, target: target)
+        startRun(dx: dx, target: home)
     }
 
-    func startRun(dx: CGFloat, target: NSPoint) {
+    /// 原地折返的远端：往水平空间更宽的那一侧跑 120px
+    func lapAnchor(home: NSPoint) -> NSPoint {
+        let left = clampOrigin(NSPoint(x: home.x - 120, y: home.y))
+        if abs(left.x - home.x) >= 60 { return left }
+        return clampOrigin(NSPoint(x: home.x + 120, y: home.y))
+    }
+
+    /// continuing=true 表示"上一段还没停" —— 只翻方向、不重启剪辑，
+    /// 否则折返处会看到她重新起跑一次（有明显顿挫）。
+    func startRun(dx: CGFloat, target: NSPoint, continuing: Bool = false,
+                  then: (() -> Void)? = nil) {
         let speed: CGFloat = 260                      // px/s
         runFrom = window.frame.origin
         runTo = target
         runDur = min(2.6, max(0.40, Double(abs(dx) / speed)))
         runT0 = Date()
 
-        // 网页负责播跑步动画，宿主负责移窗口 —— 各管一半
-        sendToPage("runStart", ["dir": dx < 0 ? -1 : 1,
-                                "durationMs": Int(runDur * 1000)])
+        let dir: Int = dx < 0 ? -1 : 1
+        if continuing {
+            sendToPage("runFlip", ["dir": dir])
+        } else {
+            sendToPage("runStart", ["dir": dir, "durationMs": Int(runDur * 1000)])
+        }
+        petLog("跑动\(continuing ? "折返" : "开始") dir=\(dir) dx=\(Int(dx)) 用时\(String(format: "%.2f", runDur))s")
 
         runTimer?.invalidate()
         runTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] t in
@@ -322,8 +400,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if k >= 1.0 {
                 t.invalidate()
                 self.runTimer = nil
-                self.sendToPage("runEnd", [:])
-                self.saveOrigin()
+                if let more = then {
+                    more()                            // 还有下一段
+                } else {
+                    self.sendToPage("runEnd", [:])
+                    self.saveOrigin()
+                    petLog("跑动结束 x=\(Int(self.window.frame.origin.x))")
+                }
             }
         }
     }
@@ -365,7 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let root = projectRoot()
         let pet = root.appendingPathComponent("pet.html")
         guard FileManager.default.fileExists(atPath: pet.path) else {
-            NSLog("WorkBuddyPetWARN: 找不到本地 pet.html（\(pet.path)）")
+            petLog("WorkBuddyPetWARN: 找不到本地 pet.html（\(pet.path)）")
             return
         }
         webView.loadFileURL(pet, allowingReadAccessTo: root)
@@ -383,7 +466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     // 服务在跑 → 换成 http 版本，这样状态联动才生效
                     self.webView.load(req)
-                    NSLog("WorkBuddyPetOK: 已连接状态服务 \(base)")
+                    petLog("WorkBuddyPetOK: 已连接状态服务 \(base)")
                 }
                 return
             }
@@ -406,7 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let root = projectRoot()
         let script = root.appendingPathComponent("pet_daemon.py")
         guard FileManager.default.fileExists(atPath: script.path) else {
-            NSLog("WorkBuddyPetWARN: 找不到 pet_daemon.py，只能以独立模式运行")
+            petLog("WorkBuddyPetWARN: 找不到 pet_daemon.py，只能以独立模式运行")
             return
         }
         // 与 启动桌面宠物.command 保持同一份候选顺序
@@ -418,7 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ]
         guard let py = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) })
                 ?? Self.whichPython() else {
-            NSLog("WorkBuddyPetWARN: 找不到 python3，只能以独立模式运行")
+            petLog("WorkBuddyPetWARN: 找不到 python3，只能以独立模式运行")
             return
         }
 
@@ -438,9 +521,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do {
             try p.run()
-            NSLog("WorkBuddyPetOK: 已自动拉起状态服务 pid=\(p.processIdentifier)（\(py)）")
+            petLog("WorkBuddyPetOK: 已自动拉起状态服务 pid=\(p.processIdentifier)（\(py)）")
         } catch {
-            NSLog("WorkBuddyPetWARN: 拉起状态服务失败 \(error.localizedDescription)")
+            petLog("WorkBuddyPetWARN: 拉起状态服务失败 \(error.localizedDescription)")
         }
     }
 
@@ -459,9 +542,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: 鼠标穿透 —— 只有角色所在的区域吃鼠标事件
+    //
+    // ⚠️ 这里曾经只依赖 `addGlobalMonitorForEvents(.mouseMoved)` 来更新判定，
+    // 而**全局监视器收不到发给自己 App 的事件** —— 一旦光标停在我们窗口上，
+    // 判定就可能停在某个过期值上：角色区域反而穿透，于是
+    // "右键点了没反应""拖不动她"这类现象就出现了，而且完全没有日志可查。
+    //
+    // 改成**轮询鼠标位置**（20Hz，只读一个坐标，代价可忽略）：
+    // 与事件投递路径完全解耦，判定永远不会过期。
 
     func watchMouse() {
+        // 全局监视器留着（离开本窗口时立刻生效，比轮询更跟手）
         moveMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            self?.updatePassthrough()
+        }
+        updatePassthrough()
+        passTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             self?.updatePassthrough()
         }
     }
@@ -470,18 +566,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !dragging else { return }
         let mouse = NSEvent.mouseLocation
         let f = window.frame
-        // 角色本体在画布里的位置：x 25%~75%，y（自底）10%~75%。
-        // 只让这一块吃鼠标事件，其余（含画布留白）全部穿透。
-        let hit = NSRect(x: f.minX + f.width * 0.23,
-                         y: f.minY + f.height * 0.07,
-                         width: f.width * 0.54,
-                         height: f.height * 0.70)
-        window.ignoresMouseEvents = !hit.contains(mouse)
+        // 角色本体在画布里的位置：x 约 18%~82%，y（自底）10%~75%。
+        // 留一点余量，让"点她"更容易命中；其余（含画布留白）仍然穿透。
+        let hit = NSRect(x: f.minX + f.width * 0.16,
+                         y: f.minY + f.height * 0.05,
+                         width: f.width * 0.68,
+                         height: f.height * 0.76)
+        let inside = hit.contains(mouse)
+        if window.ignoresMouseEvents == inside {     // 需要翻转时才动 + 记日志
+            window.ignoresMouseEvents = !inside
+            petLog("鼠标穿透切换 → \(inside ? "接住鼠标（在角色上）" : "穿透")")
+        }
     }
 
     // MARK: 处理网页指令
 
     func handle(cmd: String, body: [String: Any]) {
+        if cmd != "dragMove" { petLog("收到网页指令：\(cmd)") }
         switch cmd {
         case "dragBegin":
             dragging = true
@@ -548,7 +649,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(info)
         menu.addItem(NSMenuItem.separator())
 
-        let home = NSMenuItem(title: "跑回初始位置（她会跑过去）", action: #selector(goHome), keyEquivalent: "")
+        let home = NSMenuItem(title: "跑一下（她会跑给你看）",
+                              action: #selector(goHomeOrLap), keyEquivalent: "h")
+        home.keyEquivalentModifierMask = [.option, .command]   // 菜单里显示 ⌥⌘H
         home.target = self
         menu.addItem(home)
 
@@ -598,7 +701,7 @@ if argv.contains("--selftest-save") {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
         delegate.selfTesting = false
         delegate.saveOrigin()
-        NSLog("WorkBuddyPetOK: 自检已保存当前起点并退出")
+        petLog("WorkBuddyPetOK: 自检已保存当前起点并退出")
         NSApp.terminate(nil)
     }
 }

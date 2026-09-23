@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"><title>pet-wake-selftest</title>
+<link rel="stylesheet" href="web/pet.css">
+</head><body>
+
+<!-- 「睡着被点醒」的回归测试。
+     用户实际反馈：点她一下，醒了，但**不动又立刻睡回去**，看起来像点了没用。
+     这里跑完整一轮：睡着 → 点 → 起身（倒放 sleep）→ 待机 → 冷却后重新睡着。
+
+     用 ?wakeMs=4000 把"保持清醒"的窗口压到 4 秒，这样整轮循环能在一个测试里跑完。
+     断言的是**渲染结果**（dataset.state / dataset.frame / 实际图集），不是内部字段。 -->
+
+<div class="pet" id="pet" data-state="idle">
+  <div class="pet-body" id="petBody">
+    <div class="pet-inner"><div class="pet-sprite" id="petSprite"></div></div>
+    <div class="pet-fx">
+      <span class="fx-dots"><i></i><i></i><i></i></span>
+      <span class="fx-ring"></span><span class="fx-mark">!</span><span class="fx-check">✓</span>
+    </div>
+  </div>
+</div>
+
+<script src="assets/pet/manifest.js"></script>
+<script>
+// 让状态源稳定返回「睡着」
+window.__fakeState = 'sleeping';
+window.fetch = function () {
+  return Promise.resolve({
+    ok: true,
+    json: function () {
+      return Promise.resolve({ agent: { state: window.__fakeState, label: '睡着啦' },
+                               source: 'test' });
+    }
+  });
+};
+// ⚠️ 无头浏览器里 rAF 不推进（真实桌宠跑在 WKWebView 里，rAF 正常）。
+// 测试要验证"帧在往回走"，所以把 rAF 换成定时器 —— 只影响测试，不影响产品。
+window.requestAnimationFrame = function (cb) {
+  return setTimeout(function () { cb(Date.now()); }, 16);
+};
+// 把"保持清醒"窗口压到 4 秒。
+// 用 hash 而不是 query —— 改 hash 不会触发页面重载（免得测试把状态搞乱）。
+if (!/[?&#]wakeMs=/.test(location.search + location.hash)) { location.hash = 'wakeMs=4000'; }
+</script>
+<script src="web/pet-runtime.js"></script>
+<script src="web/pet.js"></script>
+<script>
+(function () {
+  var out = [], P = 1, F = 0;
+  function ok(name, cond, got) {
+    if (cond) { P++; } else { F++; out.push('FAIL:' + name + '(' + got + ')'); }
+  }
+
+  var root = document.getElementById('pet');
+  var body = document.getElementById('petBody');
+  var sprite = document.getElementById('petSprite');
+  function sheet() { return sprite.style.backgroundImage || ''; }
+  function onSleepSheet() { return sheet().indexOf('sleep.png') !== -1; }
+  function onIdleSheet() { return sheet().indexOf('idle.png') !== -1; }
+  function frame() { return parseInt(root.dataset.frame, 10); }
+
+  function press() {
+    var opt = { bubbles: true, cancelable: true, button: 0, pointerId: 1,
+                clientX: 40, clientY: 40, screenX: 400, screenY: 400, isPrimary: true };
+    body.dispatchEvent(new PointerEvent('pointerdown', opt));
+    body.dispatchEvent(new PointerEvent('pointerup', opt));
+  }
+
+  var frameAtClick = -1;
+
+  // 等她进入睡觉的循环段（sleep 是 1–8 躺下 + 9–12 循环），再点她 ——
+  // 这样"从当前帧往回倒放"才有可观察的起点（如果她还在第 0 帧，倒放等于没动）
+  setTimeout(function () {
+    ok('初始：状态源说睡着', root.dataset.state === 'sleeping', root.dataset.state);
+    ok('初始：在播 sleep 图集', onSleepSheet(), sheet().slice(-30));
+    ok('初始：睡觉剪辑确实在推进（rAF/时钟是活的）', frame() >= 6, frame());
+
+    press();                                   // 点她一下
+
+    setTimeout(function () {
+      ok('点完立刻转为清醒（不会下一个轮询又按回去）',
+         root.dataset.state === 'idle', root.dataset.state);
+      frameAtClick = frame();
+      ok('起身从她躺着的帧开始（不是从第 1 帧跳回）', frameAtClick >= 6, frameAtClick);
+    }, 150);
+
+    setTimeout(function () {
+      // 倒放 = 帧号在减小
+      ok('起身是倒放的（帧号在减小）', frame() < frameAtClick,
+         frameAtClick + ' → ' + frame());
+      ok('起身过程中仍在 sleep 图集上（没有跳帧）', onSleepSheet(), sheet().slice(-30));
+    }, 900);
+
+    setTimeout(function () {
+      // 起身约 1.7 秒（10 帧 @6fps），此检查点必须落在"起身已结束"与
+      // "冷却到期又睡回去"（点击 +4s）之间
+      ok('起身播完自动进入待机', onIdleSheet(), sheet().slice(-30));
+      ok('待机期间状态仍是清醒', root.dataset.state === 'idle', root.dataset.state);
+    }, 2300);
+
+    setTimeout(function () {
+      // wakeMs=4000，最后点击在 ~2.6s，冷却在 ~6.6s 到期，下一次轮询（7.5s）把她放倒
+      ok('冷却结束后会自动睡回去（不是永远不睡）',
+         root.dataset.state === 'sleeping' && onSleepSheet(),
+         root.dataset.state + '/' + sheet().slice(-30));
+
+      document.title = 'RESULT|PASS=' + P + '|FAIL=' + F +
+                       (out.length ? '|' + out.join('|') : '|ALL_OK');
+    }, 8300);
+  }, 2600);
+})();
+</script>
+</body></html>

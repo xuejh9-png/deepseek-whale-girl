@@ -45,7 +45,8 @@
     dragging: 'drag',    // 第 2 批素材
     released: 'jump',    // 第 2 批素材（从 airborneFrame 起播 = 下落+落地）
     runLeft:  'run',     // 第 3 批素材
-    runRight: 'run'
+    runRight: 'run',
+    wakeUp:   'sleep'    // 复用 sleep 的**倒放**当起身，见 startAction
   };
 
   function PetAnimation(opts) {
@@ -66,6 +67,7 @@
     this.action = null;      // 正在播的瞬时动作
     this.queue = [];
     this.done = false;       // 当前一次性剪辑是否已播完
+    this.reverse = false;    // 是否倒放（"起身"用）
     this.facing = 1;         // 1=素材原朝向（右）；-1=向左，需翻转
     this.onActionDone = opts.onActionDone || null;
   }
@@ -123,6 +125,7 @@
   /* ---------------- 播放 ---------------- */
 
   // opts: null=按剪辑自身 loop 配置；{once:true}=只播一遍；{from:帧号}
+  //       {reverse:true}=倒放（配 once 用），用于"起身"这类回放
   PetAnimation.prototype.playClip = function (name, opts) {
     var meta = this.manifest.clips[name];
     if (!meta) return false;
@@ -134,6 +137,7 @@
     this.acc = 0;
     this.done = false;
     this.loopThis = (meta.loop && !opts.once);
+    this.reverse = !!opts.reverse && !this.loopThis;
     this.applyFacing();
 
     var self = this;
@@ -229,6 +233,17 @@
       this.frame = (this.frame >= e) ? s : this.frame + 1;
       return;
     }
+    // 倒放：用于"起身" —— 睡觉那组的开场段是"躺下去"，
+    // 倒着播一遍就变成"站起来"，不用额外素材，姿势也天然对得上。
+    if (this.reverse) {
+      if (this.frame <= 0) {
+        this.done = true;
+        this.finishOneShot();
+      } else {
+        this.frame--;
+      }
+      return;
+    }
     if (this.frame >= n - 1) {
       this.done = true;
       this.finishOneShot();
@@ -266,6 +281,13 @@
       opts = { once: true, from: af || 1 };
     } else if (item.name === 'grabbed') {
       opts = null;                           // 用剪辑自身的 intro+loop 结构
+    } else if (item.name === 'wakeUp') {
+      // 起身 = 把 sleep 从她当前躺着的那一帧**倒放**回第 1 帧。
+      // 为什么必须走 action 队列、而不是直接 playClip：
+      // 直接播的话 this.action 是空的，起身播完那一刻 applyState() 会立刻
+      // 按当前状态（sleeping）把她按回睡姿 —— 看起来就是"刚爬起来又躺下"。
+      var cur = (this.clipName === 'sleep') ? this.frame + 1 : 1;
+      opts = { once: true, reverse: true, from: cur };
     } else if (item.name === 'runLeft') {
       this.setFacing(-1);
     } else if (item.name === 'runRight') {
