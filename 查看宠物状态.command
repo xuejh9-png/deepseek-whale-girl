@@ -14,7 +14,7 @@ for c in "$HOME/.local/bin/python3" \
 done
 [ -z "$PY" ] && { echo "没找到 python3"; read -k 1; exit 1; }
 
-if ! /usr/bin/curl -s -m 1 http://127.0.0.1:8791/health >/dev/null 2>&1; then
+if ! /usr/bin/curl --noproxy "*" -s -m 1 http://127.0.0.1:8791/health >/dev/null 2>&1; then
   echo "状态服务没在跑，正在拉起…"
   nohup "$PY" pet_daemon.py --port 8791 >/tmp/workbuddy-pet.log 2>&1 &!
   sleep 2

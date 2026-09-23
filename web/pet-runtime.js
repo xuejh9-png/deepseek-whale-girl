@@ -71,11 +71,21 @@
 
   PetAnimation.prototype.init = function () {
     var self = this;
+
+    // 优先用 <script src="assets/pet/manifest.js"> 预置在 window 上的清单 ——
+    // file:// 下 fetch 会被 CORS 拦，但 <script> 不受限制，
+    // 这样"双击 pet.html 直接看"也能拿到全部剪辑（否则只剩 idle）。
+    if (global.PET_MANIFEST && global.PET_MANIFEST.clips) {
+      this.manifest = global.PET_MANIFEST;
+      this.applyState();
+      return Promise.resolve();
+    }
+
     return fetch(this.manifestUrl, { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (m) { self.manifest = m; })
       .catch(function () {
-        // file:// 下 fetch 会被 CORS 拦，用兜底清单继续
+        // 两条路都不通：用兜底清单继续（只有 idle 一个动作）
         self.manifest = FALLBACK_MANIFEST;
         self.fallbackManifest = true;
       })

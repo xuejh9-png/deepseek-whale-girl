@@ -255,6 +255,9 @@ def main():
                   ensure_ascii=False, indent=2)
         print("  已更新 manifest.json")
 
+        # 同步生成 manifest.js —— 否则 file:// 下（双击直接看）读不到新清单
+        subprocess.call([sys.executable, os.path.join(HERE, "build-manifest-js.py")])
+
     if kind == "dir":
         try:
             shutil.rmtree(os.path.dirname(path))

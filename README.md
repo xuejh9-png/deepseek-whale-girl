@@ -65,6 +65,21 @@ macOS 上也可以**双击 `查看用量.command`**。
 - **⌥⌘Q**（Option+Command+Q）退出
 - 默认**只看到她**，没有卡片、没有数字面板
 
+### 不用 WorkBuddy 也能跑
+
+宠物本体**不依赖 WorkBuddy**。克隆下来直接双击 `pet.html` 就能看到一只
+会呼吸、眨眼、摆尾的鲸鱼娘（10 个动作全都可用，不是只有待机）。
+
+想要**桌面宠物**（浮在桌面上，而不是留在浏览器标签里）就编译窗口宿主：
+
+```bash
+zsh desktop/build.sh          # 需要 swiftc（xcode-select --install）
+open desktop/WorkBuddyPet.app
+```
+
+宿主启动时先显示本地页面（不等网络），再探测本地状态服务；
+**探测不到就保持独立模式** —— 她照常活着，只是不会跟着 Agent 状态变。
+
 ### 她在反映什么
 
 宠物的动作是**真数据驱动**的，不是随机动画：
@@ -75,22 +90,49 @@ macOS 上也可以**双击 `查看用量.command`**。
 | 歪头思考 | 模型正在推理 |
 | 坐着敲电脑 | 正在调用工具 / 执行任务 |
 | 跳起来 + 小星星 | 任务完成 |
-| 愣住 + 头顶 `!` | 出错了 |
+| 楞住 + 头顶 `!` | 出错了 |
 | 睡着了 | 长时间没有活动 |
 | 被拖起悬空 | 你正在拖她 |
 
-状态推断的规则（全部读本地记录，不猜测）：
-
-| 记录里的活动 | 推断 |
-|---|---|
-| `function_call` / `function_call_result` | 执行中 |
-| `reasoning` | 思考中 |
-| `user` 消息 | 等你回复 |
-| `assistant` 消息 | 刚完成 |
-| 无活跃会话心跳 | 未连接 |
-
 想亲眼确认联动：双击 **`查看宠物状态.command`**，
 它会每秒打印一次「状态 / 宠物在播哪个剪辑 / 当前任务」。
+
+### 状态源（可以换成别的工具）
+
+宠物运行时只认一个契约，**状态从哪来是独立的一层**：
+
+```jsonc
+// GET /state
+{
+  "source": "workbuddy",
+  "agent": {
+    "state": "working",        // idle|thinking|working|success|waiting|error|sleeping|offline
+    "label": "执行中",
+    "task": "帮我改个函数",      // 可选
+    "cwd": "/path/to/project",  // 可选
+    "lastActivity": 1790067331119
+  }
+}
+```
+
+仓库里已带三个适配器（`pet_sources.py`）：
+
+| 名字 | 读什么 |
+|---|---|
+| `workbuddy` | `~/.workbuddy/projects/*.jsonl` + 会话心跳 |
+| `codex` | `~/.codex/sessions/**/rollout-*.jsonl` |
+| `none` | 不读任何东西 —— 宠物只做自己的 idle 动画 |
+
+```bash
+python3 pet_daemon.py --list          # 看本机哪些可用
+python3 pet_daemon.py                 # auto：挑此刻真的有活动的那个
+python3 pet_daemon.py --source none   # 独立模式
+```
+
+**接自己的工具**：在 `pet_sources.py` 里加一个类，实现 `snapshot()` 返回上面的
+`agent` 结构即可 —— 运行时、窗口、动画一行都不用改。
+`pet_sources.test.py` 里有现成的测试写法（用合成记录 + 受控时间戳，
+不依赖真实数据就能测活跃状态）。
 
 ### 支持的状态与动作
 
@@ -115,16 +157,19 @@ macOS 上也可以**双击 `查看用量.command`**。
 
 ```
 usage_stats.py          用量统计 + 生成报告页
-pet_daemon.py           本地状态服务（推断 Agent 状态 + 聚合用量）
+pet_daemon.py           本地状态服务（薄核心，只负责 HTTP）
+pet_sources.py          状态源适配器（workbuddy / codex / none …）
 pet.html                桌面宠物页面（只有角色）
 web/pet-runtime.js      动画运行时：Sprite 取帧 / 状态机 / 动作队列
 web/pet.js              胶水层：拉状态 + 指针事件 + 宿主通信
 desktop/main.swift      Swift 透明窗口宿主（无边框 / 置顶 / 鼠标穿透 / 全局快捷键）
-assets/pet/             角色素材（10 个 Sprite Sheet + manifest.json）
+assets/pet/             角色素材（10 个 Sprite Sheet + manifest.json / manifest.js）
 
 verify-assets.py        素材逐帧验收（几何 / 循环接缝 / 透明度）
 intake-assets.py        素材自动接收入库（只自动新增，永不覆盖已有素材）
+build-manifest-js.py    manifest.json → manifest.js（让 file:// 也能读到）
 pet-runtime.test.html   动画运行时回归测试（28 项）
+pet_sources.test.py     状态推断回归测试（13 项）
 ```
 
 ### 依赖

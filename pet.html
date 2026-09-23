@@ -31,6 +31,10 @@
 
 </div>
 
+<!-- manifest 用 <script> 加载：file:// 下 fetch 会被 CORS 拦，
+     这样"双击本文件直接看"也能拿到全部剪辑（否则只剩 idle）。
+     manifest.js 由 build-manifest-js.py 从 manifest.json 生成。 -->
+<script src="assets/pet/manifest.js"></script>
 <script src="web/pet-runtime.js"></script>
 <script src="web/pet.js"></script>
 </body>

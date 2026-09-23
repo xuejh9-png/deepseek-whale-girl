@@ -37,7 +37,11 @@ CLIP = {
 
 def fetch(port):
     url = f"http://127.0.0.1:{port}/state"
-    with urllib.request.urlopen(url, timeout=2) as r:
+    # 显式关掉代理：有些环境（含开发沙箱）会设 HTTP_PROXY，
+    # 而 Python 的 proxy_bypass('127.0.0.1') 在这里返回 False，
+    # 请求会被代理拦下并返回 502，看起来像"服务挂了"。
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(url, timeout=2) as r:
         return json.load(r)
 
 

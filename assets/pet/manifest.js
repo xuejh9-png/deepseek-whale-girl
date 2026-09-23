@@ -1,0 +1,111 @@
+/* 由 build-manifest-js.py 从 manifest.json 生成 —— 不要手改这个文件。
+   用途：file:// 下 fetch 会被 CORS 拦，改用 <script> 加载。 */
+window.PET_MANIFEST = {
+  "version": 5,
+  "spriteSheet": {
+    "frameWidth": 320,
+    "frameHeight": 400,
+    "columns": 6,
+    "layout": "row-major",
+    "gap": 0,
+    "anchorX": 0.5,
+    "anchorY": 0.9,
+    "groundLineY": 0.9,
+    "characterHeight": 256,
+    "background": "transparent-rgba"
+  },
+  "clips": {
+    "idle": {
+      "file": "idle.png",
+      "frameCount": 20,
+      "rows": 4,
+      "fps": 10,
+      "loop": true,
+      "loopStart": 1,
+      "loopEnd": 20
+    },
+    "think": {
+      "file": "think.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 8,
+      "loop": true,
+      "loopStart": 5,
+      "loopEnd": 12
+    },
+    "work": {
+      "file": "work.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 10,
+      "loop": true,
+      "loopStart": 5,
+      "loopEnd": 12
+    },
+    "click": {
+      "file": "click.png",
+      "frameCount": 8,
+      "rows": 2,
+      "fps": 12,
+      "loop": false,
+      "loopStart": null,
+      "loopEnd": null
+    },
+    "jump": {
+      "file": "jump.png",
+      "frameCount": 14,
+      "rows": 3,
+      "fps": 14,
+      "loop": false,
+      "loopStart": null,
+      "loopEnd": null,
+      "airborneFrame": 7
+    },
+    "drag": {
+      "file": "drag.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 10,
+      "loop": true,
+      "loopStart": 5,
+      "loopEnd": 12
+    },
+    "run": {
+      "file": "run.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 16,
+      "loop": true,
+      "loopStart": 1,
+      "loopEnd": 12,
+      "flipForLeft": true
+    },
+    "success": {
+      "file": "success.png",
+      "frameCount": 14,
+      "rows": 3,
+      "fps": 12,
+      "loop": false,
+      "loopStart": null,
+      "loopEnd": null
+    },
+    "error": {
+      "file": "error.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 10,
+      "loop": false,
+      "loopStart": null,
+      "loopEnd": null
+    },
+    "sleep": {
+      "file": "sleep.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 6,
+      "loop": true,
+      "loopStart": 9,
+      "loopEnd": 12
+    }
+  }
+};

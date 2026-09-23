@@ -116,11 +116,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
+    // MARK: 载入
+    //
+    // 两种模式下都要能跑：
+    //   有状态服务 → 从 http 载入，宠物会跟着 Agent 状态变
+    //   没有服务   → 从本地文件载入，宠物只做自己的 idle 动画（独立可用）
+    // 所以先立刻用本地文件把界面显示出来（不用等），再探测服务，
+    // 通了就升级到 http 版本。
+
     func loadPage() {
-        // 桌宠是独立页面（只含角色），不再是「用量报告」的一部分
+        loadLocalFile()                       // 立刻显示，不等网络
+        probeDaemon()                         // 后台探测，通了再升级
+    }
+
+    /// 项目根目录。
+    /// 正常是 <项目>/desktop/WorkBuddyPet.app，所以从 bundle 上溯两层。
+    /// 直接把二进制拿出来单跑时（没有 .app 外壳），改从可执行文件路径上溯。
+    func projectRoot() -> URL {
+        let b = Bundle.main.bundleURL
+        if b.pathExtension == "app" {
+            return b.deletingLastPathComponent().deletingLastPathComponent()
+        }
+        var u = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+        for _ in 0..<4 { u = u.deletingLastPathComponent() }
+        return u
+    }
+
+    func loadLocalFile() {
+        let root = projectRoot()
+        let pet = root.appendingPathComponent("pet.html")
+        guard FileManager.default.fileExists(atPath: pet.path) else {
+            NSLog("WorkBuddyPetWARN: 找不到本地 pet.html（\(pet.path)）")
+            return
+        }
+        webView.loadFileURL(pet, allowingReadAccessTo: root)
+    }
+
+    func probeDaemon() {
         let base = baseURL.hasSuffix("/") ? baseURL : baseURL + "/"
         guard let url = URL(string: base + "pet.html") else { return }
-        webView.load(URLRequest(url: url))
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 1.5
+        URLSession.shared.dataTask(with: req) { [weak self] _, resp, _ in
+            guard let self = self else { return }
+            let ok = (resp as? HTTPURLResponse)?.statusCode == 200
+            guard ok else { return }
+            DispatchQueue.main.async {
+                // 服务在跑 → 换成 http 版本，这样状态联动才生效
+                self.webView.load(req)
+                NSLog("WorkBuddyPetOK: 已连接状态服务 \(base)")
+            }
+        }.resume()
     }
 
     // MARK: 鼠标穿透 —— 只有角色所在的区域吃鼠标事件

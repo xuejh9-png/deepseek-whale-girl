@@ -24,13 +24,13 @@ echo "  WorkBuddy 桌面宠物"
 echo "  ────────────────────────────────"
 
 # 1) 状态服务没在跑就拉起来
-if $CURL -s -m 1 http://127.0.0.1:8791/health >/dev/null 2>&1; then
+if $CURL --noproxy "*" -s -m 1 http://127.0.0.1:8791/health >/dev/null 2>&1; then
   echo "  状态服务：已在运行"
 else
   echo "  状态服务：启动中…"
   nohup "$PY" pet_daemon.py --port 8791 >/tmp/workbuddy-pet.log 2>&1 &!
   sleep 2
-  if $CURL -s -m 2 http://127.0.0.1:8791/health >/dev/null 2>&1; then
+  if $CURL --noproxy "*" -s -m 2 http://127.0.0.1:8791/health >/dev/null 2>&1; then
     echo "  状态服务：已就绪"
   else
     echo "  状态服务：启动失败，看 /tmp/workbuddy-pet.log"
@@ -50,11 +50,26 @@ fi
 
 # 3) 拉起宠物窗口
 open "$APP"
+
+# 4) 显示当前选了哪个状态源（联动模式 还是 独立模式）
+sleep 1
+SRC_INFO=$($CURL --noproxy "*" -s -m 2 http://127.0.0.1:8791/state 2>/dev/null | "$PY" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    a = d.get('agent', {})
+    print('%s ｜ %s' % (d.get('source', '?'), a.get('state', '?')))
+except Exception:
+    print('连不上')
+" 2>/dev/null)
+
 echo "  宠物已启动"
+echo "  当前状态源：$SRC_INFO"
 echo ""
 echo "  · 拖动她可以移动位置"
 echo "  · 退出：按 ⌥⌘Q（Option+Command+Q）"
 echo "    或者 右键点她 / 按住她 0.8 秒 唤出菜单"
 echo ""
 echo "  关掉工作区窗口后她也会继续待在桌面上。"
+echo "  （没装 WorkBuddy 也没关系 —— 她会以独立模式运行。）"
 sleep 1
