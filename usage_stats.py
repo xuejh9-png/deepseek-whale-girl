@@ -415,28 +415,28 @@ def build_html(agg, title, meta):
   details.fold[open]>summary .hint::after{content:" ▴"}
   .fold-body{padding:16px 20px 20px}
   footer{color:var(--muted);font-size:12px;text-align:center;margin-top:24px}
-  /* 快照提示条：这个页面**不会自动更新**，必须显眼说出来，
-     否则用户会以为统计坏了（真实发生过：盯着上午 10:50 的文件看了一整天）*/
-  .freshbar{margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-    background:#fff8e6;border:1px solid #f2d99a;border-radius:10px;
-    padding:9px 13px;font-size:13px;color:#7a5b12}
-  .freshbar b{color:#5c4207}
-  .freshbar button{margin-left:auto;font:inherit;font-size:13px;font-weight:600;
-    cursor:pointer;color:#1f2937;background:#fff;border:1px solid #d8d2c2;
-    border-radius:8px;padding:5px 12px}
-  .freshbar button:hover{background:#fffdf7;border-color:#b9ae95}
-  .freshbar button:disabled{opacity:.55;cursor:default}
+  /* 「重新统计」按钮：报告是快照，不重写就永远停在生成那一刻。
+     用户要求**只给一个按钮就够了** —— 生成时间上面那行 meta 已经写了，
+     不要再拿黄底提示条占地方。失败时才在下方补一行说明。 */
+  .head-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .head-row h1{margin:0}
+  #regenBtn{margin-left:auto;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
+    color:#1f2937;background:#fff;border:1px solid var(--line);border-radius:8px;
+    padding:6px 14px;transition:background .15s,border-color .15s}
+  #regenBtn:hover{background:#f7f8fa;border-color:#c9cdd4}
+  #regenBtn:disabled{opacity:.6;cursor:default}
+  .regen-note{margin-top:8px;font-size:12.5px;color:#b45309}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>__H1__</h1>
-    <div class="meta">统计周期 __TITLE__　·　数据范围 __FIRST__ ~ __LAST__　·　生成于 __GEN__</div>
-    <div class="freshbar" id="freshbar" hidden>
-      <span id="freshMsg">…</span>
-      <button id="regenBtn" type="button">重新统计</button>
+    <div class="head-row">
+      <h1>__H1__</h1>
+      <button id="regenBtn" type="button" title="重新扫描本地记录并刷新本页">重新统计</button>
     </div>
+    <div class="meta">统计周期 __TITLE__　·　数据范围 __FIRST__ ~ __LAST__　·　生成于 __GEN__</div>
+    <div class="regen-note" id="regenNote" hidden></div>
   </header>
 
   <div class="cards">
@@ -501,33 +501,23 @@ __HEAT_SECTION__  <section>
 </div>
 <script>
 /* 「重新统计」按钮。
-   这个报告是**生成那一刻的快照**，不重写就永远停在那儿 ——
-   用户因此以为统计坏了（真实发生过）。所以：
-     ① 显眼标出"多久前生成的"
-     ② 给一个一键重算入口，走本地状态服务的 /regenerate
-     ③ 服务没在跑就明说怎么办，绝不静默失败
+   报告是**生成那一刻的快照**，不重写就永远停在那儿 —— 用户因此以为统计坏了。
+   但**不要再加提示条**：生成时间上面那行 meta 已经写了，
+   用户明确要求"只给一个按钮就够了"（原话："很难看"）。
+   所以：默认只有按钮；点了变"统计中…"；**失败时**才在下方补一行说明。
    注意：file:// 打开的页面也能 fetch 本地服务（服务端带了 CORS *），
    所以双击 html 看报告时这个按钮同样管用。 */
 (function () {
-  var bar = document.getElementById('freshbar');
-  var msg = document.getElementById('freshMsg');
   var btn = document.getElementById('regenBtn');
-  if (!bar || !msg || !btn) return;
-  var GEN_MS = __GEN_MS__;
+  var note = document.getElementById('regenNote');
+  if (!btn) return;
   var API = 'http://127.0.0.1:8791';
-  bar.hidden = false;
-
-  function ageText() {
-    var m = Math.floor((Date.now() - GEN_MS) / 60000);
-    if (m < 1) return '刚刚';
-    if (m < 60) return m + ' 分钟前';
-    return Math.floor(m / 60) + ' 小时前';
-  }
-  msg.innerHTML = '这份数字生成于 <b>' + ageText() + '</b>，不会自动更新';
+  var label = btn.textContent;
 
   btn.addEventListener('click', function () {
     btn.disabled = true;
-    msg.innerHTML = '正在重新扫描本地记录…（几秒钟）';
+    btn.textContent = '统计中…';
+    if (note) note.hidden = true;
     fetch(API + '/regenerate', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
       .then(function (d) {
@@ -536,8 +526,12 @@ __HEAT_SECTION__  <section>
       })
       .catch(function () {
         btn.disabled = false;
-        msg.innerHTML = '连不上本地状态服务 —— 双击项目里的 <b>查看用量.command</b> ' +
-                        '重新统计，然后刷新本页';
+        btn.textContent = label;
+        if (note) {
+          note.hidden = false;
+          note.textContent = '连不上本地状态服务 —— 双击项目里的「查看用量.command」'
+                           + '重新统计，然后刷新本页';
+        }
       });
   });
 })();
@@ -548,8 +542,6 @@ __HEAT_SECTION__  <section>
     repl = {
         "__TITLE__": html.escape(title), "__FIRST__": first, "__LAST__": last,
         "__GEN__": generated,
-        # 给页面里的 JS 用：算"这份快照多久前生成的"
-        "__GEN_MS__": str(int(dt.datetime.now().timestamp() * 1000)),
         "__TOTAL_H__": human(agg["total"]), "__TOTAL__": comma(agg["total"]),
         "__PEAK_H__": human(agg["peak_val"]), "__PEAK_DAY__": agg["peak_day"],
         "__DUR__": fmt_dur(agg["longest_sec"]),
