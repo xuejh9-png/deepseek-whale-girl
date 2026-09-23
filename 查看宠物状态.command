@@ -3,11 +3,14 @@
 # 你可以一边让 WorkBuddy 干活，一边看 state 怎么变 —— 这就是"联动"的直接证据。
 cd "$(dirname "$0")" || exit 1
 
+# 找一个可用的 python3（相对路径优先，便于别人 clone 后直接跑）
 PY=""
-for c in /Users/c0437/.local/bin/python3 \
-         /Users/c0437/.workbuddy/binaries/python/versions/3.13.12/bin/python3 \
-         /opt/homebrew/bin/python3 /usr/bin/python3; do
-  [ -x "$c" ] && PY="$c" && break
+for c in "$HOME/.local/bin/python3" \
+         "$HOME/.workbuddy/binaries/python/versions/3.13.12/bin/python3" \
+         /opt/homebrew/bin/python3 \
+         "$(command -v python3 2>/dev/null)" \
+         /usr/bin/python3; do
+  if [ -n "$c" ] && [ -x "$c" ]; then PY="$c"; break; fi
 done
 [ -z "$PY" ] && { echo "没找到 python3"; read -k 1; exit 1; }
 

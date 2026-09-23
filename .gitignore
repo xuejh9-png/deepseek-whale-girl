@@ -11,6 +11,11 @@ pet.port
 *.tmp
 用量报告.html.tmp
 
+# 用量报告是【生成物】，而且里面有本机真实会话标题 / 项目路径
+# （"用量最高的会话"那一栏）。公开仓库会暴露工作内容，所以不提交。
+# 需要展示效果请用 docs/report.png 截图（默认视图不含会话名）。
+用量报告.html
+
 # 编译产物（desktop/build.sh 会重新生成）
 desktop/WorkBuddyPet.app/
 

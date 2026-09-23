@@ -3,12 +3,14 @@
 cd "$(dirname "$0")" || exit 1
 
 # 找一个可用的 python3
+# 找一个可用的 python3（相对路径优先，便于别人 clone 后直接跑）
 PY=""
-for c in /Users/c0437/.local/bin/python3 \
-         /Users/c0437/.workbuddy/binaries/python/versions/3.13.12/bin/python3 \
+for c in "$HOME/.local/bin/python3" \
+         "$HOME/.workbuddy/binaries/python/versions/3.13.12/bin/python3" \
          /opt/homebrew/bin/python3 \
+         "$(command -v python3 2>/dev/null)" \
          /usr/bin/python3; do
-  if [ -x "$c" ]; then PY="$c"; break; fi
+  if [ -n "$c" ] && [ -x "$c" ]; then PY="$c"; break; fi
 done
 if [ -z "$PY" ]; then
   echo "没找到 python3，请先安装命令行工具：xcode-select --install"
