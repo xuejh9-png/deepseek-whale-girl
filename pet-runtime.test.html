@@ -103,6 +103,12 @@
   ok('有剪辑时 data-fallback=0', anim.root.dataset.fallback === '0', anim.root.dataset.fallback);
   ok('working 映射到 work', anim.clipName === 'work', anim.clipName);
 
+  // sleeping 曾经是"写了映射但没有任何状态源会产出"的死状态。
+  // 素材补上之后就靠这层映射生效，所以这里钉住它，别再悄悄断掉。
+  anim.setState('sleeping');
+  ok('sleeping 映射到 sleep', anim.clipName === 'sleep', anim.clipName);
+  ok('sleeping 用专属剪辑（不兜底）', anim.root.dataset.fallback === '0', anim.root.dataset.fallback);
+
   anim.setState('thinking');
   var before = anim.clipName;
   anim.trigger('clicked', true);

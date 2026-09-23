@@ -9,6 +9,17 @@
 状态名固定这几个（运行时的状态机按它们选剪辑）：
     idle / thinking / working / success / waiting / error / sleeping / offline
 
+其中 `sleeping` 不是从记录里直接读出来的，而是**推出来的**：
+「球不在 Agent 手里」（success / waiting / idle）且已经安静 `SLEEP_MS`（1 分钟）
+→ sleeping。working / thinking 是正在干活，再久也不睡。
+每条时间线见 `_sleep_if_quiet`。
+
+⚠️ 不是每个源都能产出全部状态（实测审计结果）：
+    WorkBuddy → 无 error（日志里没有错误类型记录）
+    Codex     → 无 waiting
+新增适配器时请一并确认「声明的状态是否真的会被产出」——
+`run` 和 `sleeping` 都曾经"写了但永远走不到"，做了等于没做。
+
 每个适配器只负责把「某个工具的本地记录」翻译成这个契约。
 新增一个工具 = 新增一个类，运行时一行都不用改。
 
@@ -42,7 +53,28 @@ LABELS = {
 FRESH_MS = 4000            # 这么久内有活动 = 正在干活
 WORK_WINDOW_MS = 25000     # 工具调用后多久还算「执行中」
 SUCCESS_WINDOW_MS = 25000  # 回复后多久还算「刚完成」
-WAITING_MS = 90000         # 静默多久算「空闲」
+WAITING_MS = 45000         # 静默多久算「空闲」
+SLEEP_MS = 60000           # 静默多久算「睡着」（1 分钟）
+
+# 哪些状态在"安静够久"之后可以睡着。
+# ⚠️ **故意不含 working / thinking** —— 那两个是"正在干活"，
+#    就算记录很久没更新也不该睡（那是卡住了，不是没事干）。
+#    offline 也不含：它没有可信的活动时间戳，不猜。
+SLEEPY_STATES = ("success", "waiting", "idle")
+
+
+def _sleep_if_quiet(state, last_activity, now):
+    """「球不在 Agent 手里」且已安静够久 → 睡着。
+
+    这条补的是**一个从没被触发过的状态**：`sleeping` 一直写在状态表、
+    标签表和运行时的剪辑映射里，但**没有任何一个适配器会产出它** ——
+    所以 sleep 素材交付了却从没播过（和 run 是同一类问题：做完了没接上）。
+
+    参考时刻用 lastActivity（最后一次记录的毫秒时间戳），取不到就不睡 —— 不猜。
+    """
+    if state not in SLEEPY_STATES or not last_activity:
+        return state
+    return "sleeping" if (now - last_activity) >= SLEEP_MS else state
 
 
 def blank(state="idle", label=None, **kw):
@@ -202,10 +234,15 @@ class WorkBuddySource(BaseSource):
             return blank("idle", source=self.name)
 
         state, rec = "idle", {}
+        newest_ts = 0
         for r in reversed(recs):
             ts = r.get("timestamp") or 0
             if not ts:
                 continue
+            if not newest_ts:
+                newest_ts = ts          # 循环会因为 180s 窗口提前 break，
+                                        # 但"最后一次活动是什么时候"要留下 ——
+                                        # 否则安静超过 3 分钟时反而取不到参考时刻、永远不睡
             age = now - ts
             if age > 180000:
                 break
@@ -247,11 +284,13 @@ class WorkBuddySource(BaseSource):
         if cur is None and sessions:
             cur = sessions[0]
 
+        la = (rec or {}).get("timestamp") or newest_ts
+        state = _sleep_if_quiet(state, la, now)
         return blank(state,
                      task=self._scan_last_prompt(path),
                      cwd=(cur or {}).get("cwd"),
                      sessionId=(cur or {}).get("sessionId"),
-                     lastActivity=(rec or {}).get("timestamp"),
+                     lastActivity=la,
                      activeSessions=len(sessions),
                      source=self.name)
 
@@ -353,7 +392,10 @@ class CodexSource(BaseSource):
         last_ts = self._ts_ms(recs[-1].get("timestamp"))
         age = now_ms() - last_ts if last_ts else 10 ** 9
         if age > self.ACTIVE_MS:
-            return blank("idle", lastActivity=last_ts, source=self.name)
+            # 这条早退也要过睡眠规则 —— 否则"早就停了"永远停在 idle，
+            # 新加的 sleeping 就只能靠窄路径触发（写完发现走不到，等于白写）
+            return blank(_sleep_if_quiet("idle", last_ts, now_ms()),
+                         lastActivity=last_ts, source=self.name)
 
         state, rec = "idle", None
         for r in reversed(recs):
@@ -410,11 +452,13 @@ class CodexSource(BaseSource):
                 cwd = ((r.get("payload") or {}).get("cwd")) or cwd
                 break
 
+        la = self._ts_ms((rec or {}).get("timestamp")) or last_ts
+        state = _sleep_if_quiet(state, la, now_ms())
         return blank(state,
                      task=self._last_user_text(recs),
                      cwd=cwd,
                      sessionId=os.path.basename(path)[:36],
-                     lastActivity=(self._ts_ms((rec or {}).get("timestamp")) or last_ts),
+                     lastActivity=la,
                      activeSessions=1,
                      source=self.name)
 

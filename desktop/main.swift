@@ -477,7 +477,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(info)
         menu.addItem(NSMenuItem.separator())
 
-        let home = NSMenuItem(title: "回到初始位置", action: #selector(goHome), keyEquivalent: "")
+        let home = NSMenuItem(title: "跑回初始位置（她会跑过去）", action: #selector(goHome), keyEquivalent: "")
         home.target = self
         menu.addItem(home)
 
