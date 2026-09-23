@@ -22,7 +22,7 @@ CELL_W, CELL_H, ROWS = 320, 400, 2
 CUT = 306               # 身体 / 腿 分界线（参考素材实测：裙摆下沿 ~305）
 GROUND = 356            # 接地线（脚底）
 CHAR_REF_H = 258        # 基准角色高（归一化用）
-LEG_TAKE = 78           # 从归一化后的角色底部取多少 px 作为腿部精灵
+LEG_TAKE = 92           # 从归一化后的角色底部取多少 px 作为腿部精灵
 LEG_SCALE_Y = 0.85      # 腿竖直缩短 18%
 AIR_LIFT = 4            # 腾空帧抬升（要小，控高度变化 ≤3%）
 
@@ -114,8 +114,12 @@ def main():
         left = body_mid + off if not mirror else body_mid - off - nw
         r, c = divmod(i, COLS)
         ox, oy = c*CELL_W, r*CELL_H
-        out.alpha_composite(body, (ox, oy + shorten))
+        # ⚠️ 顺序很重要：**先贴腿、后贴身体**。
+        # 反过来（腿在上）会把腿在分界线上的切断边露在裙子外面 ——
+        # 2026-09-23 用户截图里"腿挂在裙子外"就是这个原因，是贴图顺序的锅，不是素材。
+        # 先腿后身，裙摆就自然盖住腿的切断边。
         out.alpha_composite(t, (ox + left, oy + foot_y - nh + 1))
+        out.alpha_composite(body, (ox, oy + shorten))
         print("%-4d %-16s %-10d %s" % (i+1, "leg%d%s" % (beat+1, "（镜像）" if mirror else ""),
                                        foot_y, "腾空抬 %dpx" % lift if lift else ""))
 
