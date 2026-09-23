@@ -13,6 +13,19 @@
 
 ---
 
+## 30 秒上手
+
+| 想干什么 | 怎么做 |
+|---|---|
+| 看这个月用了多少 token | 双击 **`查看用量.command`**（或 `python3 usage_stats.py --open`） |
+| 让鲸鱼娘浮在桌面上 | 双击 **`启动桌面宠物.command`** —— 首次会自动编译窗口，约 10 秒 |
+| 只想看看她的动画 | 双击 **`pet.html`** —— 不用装任何东西，也不需要 WorkBuddy |
+
+环境要求：**macOS + Python 3**（统计与状态服务只用标准库）。
+只有编译桌面窗口那一步才需要 Swift 命令行工具：`xcode-select --install`。
+
+---
+
 ## 它解决什么问题
 
 WorkBuddy 客户端**只显示积分（credits），不显示 token 数**。
