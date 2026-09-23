@@ -5,36 +5,52 @@
 
 用法：
     python3 intake-assets.py --dry-run    # 只找 + 验收，不动项目
-    python3 intake-assets.py              # 验收通过则安装（merge manifest + 覆盖 PNG）
+    python3 intake-assets.py              # 验收通过则安装
 
-安全设计：
-    · **先在临时目录里验合并后的全集**，通过了才动项目 ——
-      不通过时项目保持原样，不会装进半成品
-    · manifest 是**合并**语义（保留项目已有剪辑，只增补新剪辑），
-      不会被制作方按批交来的清单覆盖丢条目
-    · 素材是**移动**进项目（不是复制），并清理解压残留，保证全机只有一份
+⚠️ 2026-09-22 的事故与修复（这个脚本的核心约束就来自它）
+--------------------------------------------------------------------
+初版只判断「交付物与项目是否不同」，**没有判断「谁更新」**。
+结果：项目里已经是 21:28 交付的返工版 work.png，而桌面上还躺着 20:16 的旧包；
+旧包里的旧 work.png 因此被判定为"有变化" → **用旧版覆盖了新版，无备份**。
 
-退出码：0 = 已安装或无需安装；1 = 验收不通过
+根因是方法错，不是疏忽：**一个只会"发现差异就写入"的自动化，
+在项目比来源更新时必然造成降级覆盖。**
+
+现在的三重防护：
+  1. 逐文件分类 new / newer / same / **older** —— older 一律**跳过**并告警
+  2. 安装前把 assets/pet/ 整目录**备份**到 assets/.backup/<时间戳>/
+  3. 先在临时目录里验「合并后的全集」，**不通过绝不安装**
+
+另外：manifest 是**合并**语义（保留已有剪辑，只增补新剪辑），
+素材是**移动**而非复制，并清理解压残留。
+
+退出码：0 = 已安装 / 无需安装；1 = 验收不通过
 """
 import argparse
 import glob
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PETDIR = os.path.join(HERE, "assets", "pet")
+BACKUP = os.path.join(HERE, "assets", ".backup")
 VERIFY = os.path.join(HERE, "verify-assets.py")
 HOME = os.path.expanduser("~")
 SEARCH = [os.path.join(HOME, "Desktop"), os.path.join(HOME, "Downloads")]
 
 
+def md5(p):
+    return hashlib.md5(open(p, "rb").read()).hexdigest()
+
+
 def inside_project(p):
-    """排除项目自身 —— 否则会把 assets/pet/ 自己当成"新交付"。"""
     a, b = os.path.abspath(p), os.path.abspath(HERE)
     return a == b or a.startswith(b + os.sep)
 
@@ -50,9 +66,8 @@ def find_delivery():
                 continue
             try:
                 with zipfile.ZipFile(zp) as z:
-                    names = z.namelist()
-                if any(n.endswith(".png") and "/pet/" in n for n in names):
-                    cands.append((os.path.getmtime(zp), "zip", zp))
+                    if any(n.endswith(".png") and "/pet/" in n for n in z.namelist()):
+                        cands.append((os.path.getmtime(zp), "zip", zp))
             except Exception:
                 pass
         for root, dirs, files in os.walk(base):
@@ -72,7 +87,6 @@ def find_delivery():
 
 
 def stage(kind, path, dst):
-    """把交付物摊到 dst 目录（只取 png + manifest.json）。"""
     os.makedirs(dst, exist_ok=True)
     if kind == "zip":
         with zipfile.ZipFile(path) as z:
@@ -81,22 +95,56 @@ def stage(kind, path, dst):
                     continue
                 b = os.path.basename(n)
                 if b.endswith(".png") or b == "manifest.json":
-                    with z.open(n) as src, open(os.path.join(dst, b), "wb") as out:
-                        shutil.copyfileobj(src, out)
+                    with z.open(n) as s, open(os.path.join(dst, b), "wb") as o:
+                        shutil.copyfileobj(s, o)
     else:
         for b in os.listdir(path):
             if b.endswith(".png") or b == "manifest.json":
                 shutil.copy2(os.path.join(path, b), os.path.join(dst, b))
-    return sorted(f for f in os.listdir(dst))
+    # zip 解出来的文件 mtime 是压缩包里的时间戳，这里统一成"交付到达时间"，
+    # 否则压缩包时间戳可能比磁盘上的文件早，导致误判 older
+    now = time.time()
+    for b in os.listdir(dst):
+        os.utime(os.path.join(dst, b), (now, now))
+    return sorted(os.listdir(dst))
 
 
-def merge_manifest(project_man, delivery_man):
-    """合并：保留项目已有剪辑，增补交付清单里的剪辑。"""
-    if not delivery_man:
-        return project_man, []
-    out = json.loads(json.dumps(project_man))
+def classify(files, tmp):
+    """逐文件判定：new / same / differs
+
+    ⚠️ 刻意【不按时间戳】判新旧 —— zip 里的时间戳是压缩时的，
+    解出来还可能早于磁盘文件；靠 mtime 判"谁更新"会把降级包误判成升级。
+    所以策略从"谁更新"改成**更保守的一条**：
+
+      · new    → 项目里没有这个文件 → 安装
+      · same   → 字节相同 → 跳过
+      · differs→ 项目里已有同名文件但内容不同 → **不自动覆盖**，
+                 写通知让人确认（因为无法判断这是"返工升级"还是"旧包降级"）
+
+    自动写入只做"新增"，**永不自动覆盖已有素材**。
+    这是 2026-09-22 覆盖事故后定下的硬规则：
+    一个只判断"有差异"的自动化，在项目比来源更新时必然造成回退。
+    """
+    out = {}
+    for f in files:
+        if not f.endswith(".png"):
+            continue
+        src, dst = os.path.join(tmp, f), os.path.join(PETDIR, f)
+        if not os.path.exists(dst):
+            out[f] = "new"
+        elif md5(src) == md5(dst):
+            out[f] = "same"
+        else:
+            out[f] = "differs"
+    return out
+
+
+def merge_manifest(pm, dm):
+    if not dm:
+        return pm, [], []
+    out = json.loads(json.dumps(pm))
     added, updated = [], []
-    for name, meta in delivery_man.get("clips", {}).items():
+    for name, meta in dm.get("clips", {}).items():
         if name in out["clips"]:
             if json.dumps(out["clips"][name], sort_keys=True) != json.dumps(meta, sort_keys=True):
                 updated.append(name)
@@ -104,33 +152,9 @@ def merge_manifest(project_man, delivery_man):
         else:
             out["clips"][name] = meta
             added.append(name)
-    # 顶层 spriteSheet 以交付为准（尺寸/锚点若变了要跟上）
-    if "spriteSheet" in delivery_man:
-        out["spriteSheet"] = delivery_man["spriteSheet"]
+    if "spriteSheet" in dm:
+        out["spriteSheet"] = dm["spriteSheet"]
     return out, added, updated
-
-
-def md5(p):
-    import hashlib
-    return hashlib.md5(open(p, "rb").read()).hexdigest()
-
-
-def whats_new(files, tmp, delivery_man, project_man):
-    """交付内容相对项目到底有没有变化。全都一样就是"旧包重复发现"。"""
-    changed = []
-    for f in files:
-        if not f.endswith(".png"):
-            continue
-        src, dst = os.path.join(tmp, f), os.path.join(PETDIR, f)
-        if not os.path.exists(dst):
-            changed.append(f"{f}（新）")
-        elif md5(src) != md5(dst):
-            changed.append(f"{f}（有改动）")
-    if delivery_man:
-        for name in delivery_man.get("clips", {}):
-            if name not in project_man.get("clips", {}):
-                changed.append(f"剪辑 {name}（新）")
-    return changed
 
 
 def main():
@@ -144,53 +168,66 @@ def main():
         return 0
     print(f"FOUND  {kind}: {path}")
 
-    delivery_files = None
     with tempfile.TemporaryDirectory() as tmp:
         files = stage(kind, path, tmp)
-        delivery_files = files
         print(f"  交付内容: {', '.join(files)}")
 
-        project_man = json.load(open(os.path.join(PETDIR, "manifest.json"), encoding="utf-8"))
-        delivery_man = None
-        dman_path = os.path.join(tmp, "manifest.json")
-        if os.path.exists(dman_path):
+        pm = json.load(open(os.path.join(PETDIR, "manifest.json"), encoding="utf-8"))
+        dm = None
+        dp = os.path.join(tmp, "manifest.json")
+        if os.path.exists(dp):
             try:
-                delivery_man = json.load(open(dman_path, encoding="utf-8"))
+                dm = json.load(open(dp, encoding="utf-8"))
             except Exception as e:
-                print(f"  WARN 交付的 manifest 解析失败：{e}（将沿用项目现有清单）")
+                print(f"  WARN 交付的 manifest 解析失败：{e}")
 
-        # —— 是不是"旧包重复发现"？是的话直接退出，别每次轮询都报一遍
-        changed = whats_new(files, tmp, delivery_man, project_man)
-        if not changed:
-            print("NO_NEW_ASSETS  交付内容与已装素材完全一致（旧包重复发现），跳过")
+        # —— 三重防护之一：逐文件判定（只自动新增，绝不覆盖已有素材）——
+        cls = classify(files, tmp)
+        installable = [f for f, v in cls.items() if v == "new"]
+        differs = [f for f, v in cls.items() if v == "differs"]
+        print("  逐文件判定: " + ", ".join(f"{f}={v}" for f, v in sorted(cls.items())))
+        if differs:
+            print(f"  ⚠ 以下文件项目里已存在且内容不同 → **不自动覆盖**，需人工确认："
+                  f"{', '.join(differs)}")
+            print("    （无法判断是'返工升级'还是'旧包降级'，交给你决定）")
+            notice = os.path.join(HOME, "Desktop", "桌宠素材-待人工确认.md")
+            with open(notice, "w", encoding="utf-8") as fh:
+                fh.write("# 桌宠素材：有文件需要你确认\n\n")
+                fh.write(f"检测到交付包：`{path}`\n\n")
+                fh.write("以下文件项目里已存在且**内容与交付包不同**，"
+                         "程序**没有自动覆盖**（分不清是返工升级还是旧包降级）：\n\n")
+                for f in differs:
+                    fh.write(f"- `{f}`\n")
+                fh.write("\n## 你要做的\n\n")
+                fh.write("如果这是**新的返工版**（要采纳），回一句话让我覆盖即可；\n"
+                         "如果这是**旧包重新投递**（要丢弃），直接删掉它就行。\n\n")
+                fh.write("备份在 `assets/.backup/<时间戳>/`，随时可回退。\n")
+            print(f"    已写通知：{notice}")
+
+        merged, added, updated = merge_manifest(pm, dm)
+        if not installable and not added:
+            print("NO_NEW_ASSETS  没有可自动新增的内容，跳过")
             return 0
-        print(f"  实际有变化: {', '.join(changed)}")
+        print(f"  可安装: {', '.join(installable) or '无'}；manifest 新增 {added or '无'} / 更新 {updated or '无'}")
 
-        # 合并出「全集」到临时目录：先放项目现有的，再用交付的覆盖
+        # —— 在临时目录里验「合并后的全集」 ——
         merged_dir = os.path.join(tmp, "_merged")
         shutil.copytree(PETDIR, merged_dir)
-        for f in files:
-            if not f.endswith(".png"):
-                continue
+        for f in installable:
+            p = os.path.join(tmp, f)
             try:
                 from PIL import Image
-                im = Image.open(os.path.join(tmp, f))
+                im = Image.open(p)
                 if im.size[0] % 320 or im.size[1] % 400:
                     print(f"  SKIP {f}: 尺寸 {im.size} 不是 320×400 的整数倍")
                     continue
             except Exception as e:
                 print(f"  SKIP {f}: 打不开 ({e})")
                 continue
-            shutil.copy2(os.path.join(tmp, f), os.path.join(merged_dir, f))
-
-        merged, added, updated = merge_manifest(project_man, delivery_man) if delivery_man \
-            else (project_man, [], [])
+            shutil.copy2(p, os.path.join(merged_dir, f))
         json.dump(merged, open(os.path.join(merged_dir, "manifest.json"), "w", encoding="utf-8"),
                   ensure_ascii=False, indent=2)
-        print(f"  manifest 合并: 新增 {added or '无'} / 更新 {updated or '无'} / "
-              f"保留 {[k for k in project_man['clips'] if k not in (added or [])]}")
 
-        # 验收「合并后的全集」
         print("\n--- 验收合并后的全集 ---")
         sys.stdout.flush()
         rc = subprocess.call([sys.executable, VERIFY, "--dir", merged_dir])
@@ -203,23 +240,24 @@ def main():
             print("\n(dry-run) 验收通过，未安装。")
             return 0
 
-        # 安装
-        print("\n--- 安装 ---")
-        os.makedirs(PETDIR, exist_ok=True)
-        for f in files:
-            if f.endswith(".png"):
-                src = os.path.join(tmp, f)
-                if os.path.exists(src):
-                    shutil.move(src, os.path.join(PETDIR, f))
-                    print(f"  装入 {f}")
+        # —— 三重防护之二：安装前备份 ——
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        bdir = os.path.join(BACKUP, stamp)
+        os.makedirs(bdir, exist_ok=True)
+        for f in os.listdir(PETDIR):
+            shutil.copy2(os.path.join(PETDIR, f), os.path.join(bdir, f))
+        print(f"\n--- 安装（已备份到 assets/.backup/{stamp}/）---")
+
+        for f in installable:
+            shutil.move(os.path.join(tmp, f), os.path.join(PETDIR, f))
+            print(f"  装入 {f}")
         json.dump(merged, open(os.path.join(PETDIR, "manifest.json"), "w", encoding="utf-8"),
                   ensure_ascii=False, indent=2)
         print("  已更新 manifest.json")
 
-    # 清理交付残留（桌面/下载里的解压目录），只保留 zip 归档
     if kind == "dir":
         try:
-            shutil.rmtree(os.path.dirname(path))     # 删掉 assets/ 那一层
+            shutil.rmtree(os.path.dirname(path))
             print(f"  已清理解压目录 {path}")
         except Exception as e:
             print(f"  WARN 清理未完成：{e}")

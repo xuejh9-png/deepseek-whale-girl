@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "spriteSheet": {
     "frameWidth": 320,
     "frameHeight": 400,
@@ -21,6 +21,24 @@
       "loop": true,
       "loopStart": 1,
       "loopEnd": 20
+    },
+    "think": {
+      "file": "think.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 8,
+      "loop": true,
+      "loopStart": 5,
+      "loopEnd": 12
+    },
+    "work": {
+      "file": "work.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 10,
+      "loop": true,
+      "loopStart": 5,
+      "loopEnd": 12
     },
     "click": {
       "file": "click.png",
@@ -50,22 +68,41 @@
       "loopStart": 5,
       "loopEnd": 12
     },
-    "think": {
-      "file": "think.png",
+    "run": {
+      "file": "run.png",
       "frameCount": 12,
       "rows": 2,
-      "fps": 8,
+      "fps": 16,
       "loop": true,
-      "loopStart": 5,
-      "loopEnd": 12
+      "loopStart": 1,
+      "loopEnd": 12,
+      "flipForLeft": true
     },
-    "work": {
-      "file": "work.png",
+    "success": {
+      "file": "success.png",
+      "frameCount": 14,
+      "rows": 3,
+      "fps": 12,
+      "loop": false,
+      "loopStart": null,
+      "loopEnd": null
+    },
+    "error": {
+      "file": "error.png",
       "frameCount": 12,
       "rows": 2,
       "fps": 10,
+      "loop": false,
+      "loopStart": null,
+      "loopEnd": null
+    },
+    "sleep": {
+      "file": "sleep.png",
+      "frameCount": 12,
+      "rows": 2,
+      "fps": 6,
       "loop": true,
-      "loopStart": 5,
+      "loopStart": 9,
       "loopEnd": 12
     }
   }

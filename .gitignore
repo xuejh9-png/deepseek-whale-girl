@@ -14,6 +14,9 @@ pet.port
 # 编译产物（desktop/build.sh 会重新生成）
 desktop/WorkBuddyPet.app/
 
+# 素材接入前的自动备份（本地保险，不进仓库）
+assets/.backup/
+
 # 编辑器
 .vscode/
 .idea/
