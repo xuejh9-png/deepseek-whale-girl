@@ -431,6 +431,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         probeDaemon()                         // 后台探测，通了再升级
     }
 
+    /// 端口通不通 —— 直接用裸 socket connect。
+    ///
+    /// ⚠️ **不要用 URLSession 做这个探测。** 实测：`open` 启动的实例上，
+    /// URLSession 的请求会**悬住不返回**（连 completion 都不进，日志里一行都没有），
+    /// 结果是服务永远拉不起来、宠物永远退回"独立模式"，
+    /// 而这个工具的**主要价值就是状态联动**。前台从终端起同一个二进制却正常 —— 典型的
+    /// "受会话/代理层影响"。裸 socket 不走系统代理、不经过任何会话层，结果确定。
+    func portOpen(_ port: Int) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(port).bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        // loopback 上 connect 要么立刻成功、要么立刻 ECONNREFUSED，不会久等
+        let rc = withUnsafePointer(to: &addr) { p -> Int32 in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                connect(fd, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return rc == 0
+    }
+
+    func probeDaemon(attempt: Int = 0) {
+        let port = URL(string: baseURL)?.port ?? 8791
+
+        guard portOpen(port) else {
+            if !daemonSpawnTried {
+                daemonSpawnTried = true
+                petLog("端口 \(port) 未监听 → 自己拉起状态服务")
+                spawnDaemon()
+            }
+            // 拉起要几秒；多试几次，别只探一次就放弃
+            if attempt < 8 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    self?.probeDaemon(attempt: attempt + 1)
+                }
+            } else {
+                petLog("⚠️ 状态服务始终没起来，保持独立模式（看她仍然正常，只是不跟状态联动）")
+            }
+            return
+        }
+
+        // 端口通了 → 换成 http 版本。这一步用 WKWebView 自己的网络栈加载，
+        // 和上面那个探测无关（探测只用 socket，不受会话层影响）。
+        let base = baseURL.hasSuffix("/") ? baseURL : baseURL + "/"
+        guard let url = URL(string: base + "pet.html") else { return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 5
+        webView.load(req)
+        petLog("已连接状态服务 \(base)（第 \(attempt + 1) 次探测）")
+    }
+
     /// 项目根目录。
     /// 正常是 <项目>/desktop/WorkBuddyPet.app，所以从 bundle 上溯两层。
     /// 直接把二进制拿出来单跑时（没有 .app 外壳），改从可执行文件路径上溯。
@@ -452,36 +506,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         webView.loadFileURL(pet, allowingReadAccessTo: root)
-    }
-
-    func probeDaemon() {
-        let base = baseURL.hasSuffix("/") ? baseURL : baseURL + "/"
-        guard let url = URL(string: base + "pet.html") else { return }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 1.5
-        URLSession.shared.dataTask(with: req) { [weak self] _, resp, _ in
-            guard let self = self else { return }
-            let ok = (resp as? HTTPURLResponse)?.statusCode == 200
-            if ok {
-                DispatchQueue.main.async {
-                    // 服务在跑 → 换成 http 版本，这样状态联动才生效
-                    self.webView.load(req)
-                    petLog("WorkBuddyPetOK: 已连接状态服务 \(base)")
-                }
-                return
-            }
-            // 服务不在 —— 自己拉一个起来。
-            // 不然她永远是"独立模式"：宠物照常活着但不跟 Agent 状态联动，
-            // 而那恰恰是这个工具的主要价值。只在第一次探测失败时尝试，避免反复拉起。
-            DispatchQueue.main.async {
-                guard !self.daemonSpawnTried else { return }
-                self.daemonSpawnTried = true
-                self.spawnDaemon()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                    self?.probeDaemon()
-                }
-            }
-        }.resume()
     }
 
     /// 找不到状态服务就自己起一个（等价于双击 启动桌面宠物.command 里那一步）
