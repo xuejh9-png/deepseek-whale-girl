@@ -21,7 +21,13 @@
 <script>
 (function () {
   var out = [], P = 1, F = 0;
-  var PNG = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';   // 1px，避免网络依赖
+  // 每个剪辑用【不同的】1px SVG —— 这样才能验证 background-image 有没有真的切过去
+  function sheet(color) {
+    return 'data:image/svg+xml,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">' +
+      '<rect width="20" height="20" fill="' + color + '"/></svg>');
+  }
+  var C = { idle:'#111', work:'#222', sleep:'#333', click:'#444', jump:'#555', drag:'#666' };
 
   function ok(name, cond, got) {
     if (cond) { P++; } else { F++; out.push('FAIL:' + name + '(' + got + ')'); }
@@ -31,12 +37,12 @@
     version: 5,
     spriteSheet: { frameWidth: 320, frameHeight: 400, columns: 6 },
     clips: {
-      idle:  { file: PNG, frameCount: 20, rows: 4, fps: 10, loop: true,  loopStart: 1,  loopEnd: 20 },
-      work:  { file: PNG, frameCount: 12, rows: 2, fps: 10, loop: true,  loopStart: 5,  loopEnd: 12 },
-      sleep: { file: PNG, frameCount: 12, rows: 2, fps: 6,  loop: true,  loopStart: 9,  loopEnd: 12 },
-      click: { file: PNG, frameCount: 8,  rows: 2, fps: 12, loop: false, loopStart: null, loopEnd: null },
-      jump:  { file: PNG, frameCount: 14, rows: 3, fps: 14, loop: false, loopStart: null, loopEnd: null, airborneFrame: 7 },
-      drag:  { file: PNG, frameCount: 12, rows: 2, fps: 10, loop: true,  loopStart: 5,  loopEnd: 12 }
+      idle:  { file: sheet(C.idle),  frameCount: 20, rows: 4, fps: 10, loop: true,  loopStart: 1,  loopEnd: 20 },
+      work:  { file: sheet(C.work),  frameCount: 12, rows: 2, fps: 10, loop: true,  loopStart: 5,  loopEnd: 12 },
+      sleep: { file: sheet(C.sleep), frameCount: 12, rows: 2, fps: 6,  loop: true,  loopStart: 9,  loopEnd: 12 },
+      click: { file: sheet(C.click), frameCount: 8,  rows: 2, fps: 12, loop: false, loopStart: null, loopEnd: null },
+      jump:  { file: sheet(C.jump),  frameCount: 14, rows: 3, fps: 14, loop: false, loopStart: null, loopEnd: null, airborneFrame: 7 },
+      drag:  { file: sheet(C.drag),  frameCount: 12, rows: 2, fps: 10, loop: true,  loopStart: 5,  loopEnd: 12 }
     }
   };
 
@@ -46,6 +52,11 @@
     basePath: '', manifestUrl: 'data:application/json,{}'
   });
   anim.manifest = MAN;
+
+  // 当前画面上到底是哪张 sheet（不是内部 clipName —— 这两者曾经不一致）
+  function bgOf() { return anim.el.style.backgroundImage || ''; }
+  // data URI 里的 # 会被编码成 %23，所以比对编码后的形式
+  function bgHas(color) { return bgOf().indexOf(encodeURIComponent(color)) !== -1; }
 
   function tick(ms, step) {
     step = step || 10;
@@ -132,7 +143,33 @@
   anim.trigger('clicked', true);           // 后续动作仍应能启动
   ok('缺素材动作不阻塞后续动作', anim.clipName === 'click', anim.clipName);
 
-  document.title = 'RESULT|PASS=' + P + '|FAIL=' + F + (out.length ? '|' + out.join('|') : '|ALL_OK');
+  // ---- 14. 画面上到底是不是当前剪辑的 sheet ----
+  // 回归：曾经只在"首次加载"时设 backgroundImage，
+  // 切回已缓存的剪辑就沿用上一张 sheet —— 帧号按新剪辑走、画面却是旧剪辑，
+  // 症状是 jump 播完切回 work，却一直显示 jump 的落地帧在循环。
+  // ⚠️ 这一项必须断言「实际渲染」，只断言 clipName 是抓不到的。
+  var names = Object.keys(MAN.clips);
+  names.forEach(function (n) { anim.playClip(n); });      // 触发全部加载
+  setTimeout(function () {
+    anim.playClip('idle');        tick(60);
+    ok('画面 = idle sheet',  bgHas(C.idle), bgOf().slice(0, 60));
+    anim.playClip('work');        tick(60);
+    ok('画面 = work sheet',  bgHas(C.work), bgOf().slice(0, 60));
+    anim.playClip('idle');        tick(60);
+    ok('切回已加载过的 idle，画面跟着换', bgHas(C.idle), bgOf().slice(0, 60));
+    anim.playClip('jump', { once: true, from: 7 }); tick(60);
+    ok('画面 = jump sheet',  bgHas(C.jump), bgOf().slice(0, 60));
+
+    // 模拟真实回归路径：jump 播完 → applyState() 切回 work（work 早已缓存）
+    anim.setState('working');
+    tick(2000);
+    ok('jump 播完切回工作态，画面必须换成 work sheet',
+       bgHas(C.work), 'img=' + (bgHas(C.jump) ? 'jump(旧)' : bgHas(C.idle) ? 'idle' : '?') +
+                      ' clip=' + anim.clipName);
+    ok('且确实停在 work 剪辑', anim.clipName === 'work', anim.clipName);
+
+    document.title = 'RESULT|PASS=' + P + '|FAIL=' + F + (out.length ? '|' + out.join('|') : '|ALL_OK');
+  }, 500);
 })();
 </script>
 </body></html>

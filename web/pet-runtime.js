@@ -124,6 +124,14 @@
 
     var self = this;
     var url = this.basePath + meta.file;
+
+    // ⚠️ 无论该剪辑是否已缓存，都必须把背景图切过去。
+    // 曾经只在"首次加载"时设 backgroundImage，切回已加载过的剪辑时就沿用上一张
+    // sheet —— 帧号按新剪辑走、画面却是旧剪辑的，症状是"显示落地帧却在循环"。
+    if (this.el.style.backgroundImage.indexOf(url) === -1) {
+      this.el.style.backgroundImage = 'url("' + url + '")';
+    }
+
     if (this.loaded[name]) {
       this.relayout();
       this.renderFrame(true);
@@ -135,7 +143,6 @@
         if (self.clipName === name) { self.relayout(); self.renderFrame(true); }
       };
       img.src = url;
-      this.el.style.backgroundImage = 'url("' + url + '")';
     }
     return true;
   };
