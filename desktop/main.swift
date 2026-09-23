@@ -92,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let originKey = "petWindowOrigin"
     var selfTesting = false
     var daemonSpawnTried = false
+    var lastMenuAt = Date.distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)      // 不占 Dock
@@ -633,6 +634,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         case "menu":
             dragging = false
+            // 网页那边右键和 contextmenu 都可能报一次 → 300ms 内只弹一个菜单
+            if Date().timeIntervalSince(lastMenuAt) < 0.3 { break }
+            lastMenuAt = Date()
             showMenu()
 
         case "quit":

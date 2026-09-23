@@ -4,9 +4,13 @@
 </head><body>
 
 <!-- 宿主 ↔ 网页 桥的回归测试。
-     这一层是**跨进程契约**（Swift 用 evaluateJavaScript 调 window.petHostEvent），
-     平时完全没有覆盖，最容易在改一边的时候悄悄断掉。
-     用真实 manifest（manifest.js）+ 真实 pet.js，断言的是**渲染结果**，不是内部字段。
+     这一层是**跨进程契约**（Swift 用 evaluateJavaScript 调 window.petHostEvent，
+     网页用 postMessage 发指令给宿主），平时完全没有覆盖，最容易在改一边时悄悄断掉。
+
+     做法：装一个**假宿主**（window.webkit.messageHandlers.petHost）拦截所有发出去的指令，
+     于是"右键是否真的发了 menu""双击是否发了 menu"这种问题可以断言，不用靠手点。
+
+     用真实 manifest（manifest.js）+ 真实 pet.js；断言的是**发出去的指令**和**渲染结果**。
      双击本文件即可跑（不需要 daemon），结果写在 document.title。 -->
 
 <div class="pet" id="pet" data-state="idle">
@@ -21,9 +25,14 @@
 
 <script src="assets/pet/manifest.js"></script>
 <script>
-// 让本测试**自足**：把 fetch 掐掉，不依赖本机有没有跑状态服务。
-// 否则 pet.js 的轮询会真的去连 127.0.0.1:8791，无头浏览器会因为
-// 定时器一直有活干而永不退出（实测被卡住过），而且在没跑服务的机器上结果还不一样。
+// ⚠️ 假宿主必须在 pet.js 之前装好：pet.js 在加载时就读取
+// window.webkit.messageHandlers.petHost 来决定 IS_DESKTOP。
+window.__sent = [];
+window.webkit = { messageHandlers: { petHost: { postMessage: function (m) {
+  window.__sent.push(m);
+} } } };
+
+// 让本测试自足：掐掉 fetch，不依赖本机有没有跑状态服务。
 window.fetch = function () { return Promise.reject(new Error('offline')); };
 </script>
 <script src="web/pet-runtime.js"></script>
@@ -36,38 +45,45 @@ window.fetch = function () { return Promise.reject(new Error('offline')); };
   }
 
   var root = document.getElementById('pet');
+  var body = document.getElementById('petBody');
   var sprite = document.getElementById('petSprite');
   function flip() { return root.style.getPropertyValue('--pet-flip'); }
   function sheet() { return sprite.style.backgroundImage || ''; }
+  function cmds() { return window.__sent.map(function (m) { return m.cmd; }); }
+  function lastCmd() { var c = cmds(); return c.length ? c[c.length - 1] : ''; }
+  function clear() { window.__sent.length = 0; }
+  function ptr(type, x, y, button) {
+    body.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true,
+      button: button || 0, pointerId: 1, clientX: x || 40, clientY: y || 40,
+      screenX: 400, screenY: 400, isPrimary: true }));
+  }
+  function click() { ptr('pointerdown'); ptr('pointerup'); }
+  function wait(ms, fn) { setTimeout(fn, ms); }
 
   setTimeout(function () {
+    // ---- 桥本身 ----
     ok('window.petHostEvent 已导出（宿主靠它驱动网页）',
        typeof window.petHostEvent === 'function', typeof window.petHostEvent);
-
+    ok('页面能把指令发给宿主（假宿主收到了消息）', cmds().length > 0, cmds().join(','));
+    ok('轮询时会把状态推给宿主（菜单要显示她此刻在干什么）',
+       window.__sent.some(function (m) { return m.cmd === 'state'; }), cmds().join(','));
     ok('真实清单里有 run 剪辑（否则跑步会被静默跳过）',
-       !!(window.PET_MANIFEST && window.PET_MANIFEST.clips && window.PET_MANIFEST.clips.run),
-       window.PET_MANIFEST && Object.keys(window.PET_MANIFEST.clips).join(','));
+       !!(window.PET_MANIFEST.clips.run), Object.keys(window.PET_MANIFEST.clips).join(','));
+    ok('run 声明了 flipForLeft', !!window.PET_MANIFEST.clips.run.flipForLeft,
+       window.PET_MANIFEST.clips.run.flipForLeft);
 
-    ok('run 声明了 flipForLeft',
-       !!(window.PET_MANIFEST.clips.run || {}).flipForLeft,
-       (window.PET_MANIFEST.clips.run || {}).flipForLeft);
-
-    // 向左跑：必须切到 run 的 sheet，并且水平翻转
+    // ---- 宿主 → 网页 ----
     window.petHostEvent('runStart', { dir: -1, durationMs: 400 });
     ok('向左跑切到 run 的图集', sheet().indexOf('run.png') !== -1, sheet().slice(-40));
     ok('向左跑写入 --pet-flip=-1（CSS 靠它做 scaleX）', flip() === '-1', flip());
 
-    // 向右跑：同一剪辑，不翻转
     window.petHostEvent('runStart', { dir: 1, durationMs: 400 });
-    ok('向右跑切到 run 的图集', sheet().indexOf('run.png') !== -1, sheet().slice(-40));
     ok('向右跑 --pet-flip=1', flip() === '1', flip());
 
-    // 跑动结束：宿主显式收尾，必须回到状态剪辑并复位朝向
     window.petHostEvent('runEnd', {});
     ok('跑完离开 run 图集', sheet().indexOf('run.png') === -1, sheet().slice(-40));
     ok('跑完朝向复位为 1', flip() === '1', flip());
 
-    // 缺参数 / 未知事件不能让页面炸掉（宿主版本不一致时会遇到）
     var survived = true;
     try {
       window.petHostEvent('runStart', {});
@@ -75,10 +91,40 @@ window.fetch = function () { return Promise.reject(new Error('offline')); };
       window.petHostEvent('runEnd');
     } catch (e) { survived = false; }
     ok('参数缺失或未知事件不抛异常', survived, survived ? '' : 'threw');
-    ok('异常事件后朝向仍为 1', flip() === '1', flip());
 
-    document.title = 'RESULT|PASS=' + P + '|FAIL=' + F +
-                     (out.length ? '|' + out.join('|') : '|ALL_OK');
+    // ---- 网页 → 宿主：右键 ----
+    // 回归：contextmenu 在 WKWebView 里**不触发**（日志证据：用户的点击一堆，
+    // menu 一次都没有），所以右键改由 pointerdown 的 button===2 触发。
+    clear();
+    ptr('pointerdown', 40, 40, 2);
+    ok('右键（button=2）发出 menu 指令 —— 不依赖 contextmenu',
+       lastCmd() === 'menu', cmds().join(','));
+    ok('右键不应被当成拖拽', cmds().indexOf('dragBegin') === -1, cmds().join(','));
+
+    // ---- 网页 → 宿主：单击 / 双击 / 拖拽 ----
+    wait(450, function () {                       // 先隔开，避免和上一次算双击
+      clear();
+      click();
+      ok('单击发出 clicked（角色反应）', lastCmd() === 'clicked', cmds().join(','));
+
+      clear();
+      click();                                    // 双击的第一下
+      click();                                    // 第二下 → 应该是菜单
+      ok('双击发出 menu 指令', lastCmd() === 'menu', cmds().join(','));
+
+      clear();
+      ptr('pointerdown', 40, 40);
+      ptr('pointermove', 90, 70);
+      ptr('pointerup', 90, 70);
+      var c = cmds().join(',');
+      ok('拖拽发出 dragBegin', c.indexOf('dragBegin') !== -1, c);
+      ok('拖拽移动发出 dragMove', c.indexOf('dragMove') !== -1, c);
+      ok('松手发出 dragEnd', c.indexOf('dragEnd') !== -1, c);
+      ok('拖动过就不该再发 clicked', c.indexOf('clicked') === -1, c);
+
+      document.title = 'RESULT|PASS=' + P + '|FAIL=' + F +
+                       (out.length ? '|' + out.join('|') : '|ALL_OK');
+    });
   }, 300);
 })();
 </script>

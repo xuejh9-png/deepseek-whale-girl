@@ -23,6 +23,7 @@ WorkBuddy Pet —— 本地状态服务（纯 Python 标准库）
 """
 import argparse
 import datetime as dt
+import importlib
 import json
 import os
 import socketserver
@@ -104,6 +105,11 @@ def regenerate_report():
     if not _regen_lock.acquire(blocking=False):
         return {"ok": False, "error": "已经有一次重新统计在进行中，稍等一下"}
     try:
+        # ⚠️ **必须 reload。** 这是个长期驻留的进程，import 一次就把 usage_stats
+        # 载进内存了；之后改了那个文件、服务仍然在跑旧代码 ——
+        # 症状是用户点了「重新统计」，页面又变回旧样子
+        #（真实踩过：黄底提示条已经删掉，点一次它又回来了）。
+        importlib.reload(US)
         agg, title, path, _meta = US.generate()
         _usage_cache["ts"] = 0.0                 # 顺手让 /usage 的缓存失效
         return {"ok": True, "generatedAt": int(time.time() * 1000),

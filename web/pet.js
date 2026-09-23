@@ -136,6 +136,7 @@
 
   var drag = { on: false, moved: false, sx: 0, sy: 0, lastScreenX: 0 };
   var pressWasAsleep = false;
+  var lastClickAt = 0;      // 用于识别双击（双击 = 打开菜单）
 
   // 拖拽倾斜：素材画的是中性悬垂，"往哪边拖就倾向哪边"由运行时做
   function setTilt(deg) {
@@ -144,6 +145,15 @@
   }
 
   body.addEventListener('pointerdown', function (e) {
+    // 右键：**不依赖 contextmenu** —— 实测在 WKWebView 里这个 DOM 事件不触发
+    //（日志证据：用户的点击有一堆 dragBegin/clicked，menu 一次都没有）。
+    // pointerdown 的 button===2 是可靠的信号。
+    if (e.button === 2) {
+      if (!IS_DESKTOP) return;
+      e.preventDefault();
+      tell('menu');
+      return;
+    }
     if (e.button !== 0) return;
     // 任何一次按下都算"你还在"，让她保持清醒一分钟
     pressWasAsleep = (anim.currentClip() === 'sleep');
@@ -183,6 +193,18 @@
     pet.classList.remove('dragging');
     setTilt(0);
     tell('dragEnd');
+
+    // 双击 = 打开菜单。
+    // 为什么值得单独加一条：`clicked` 是**实测最可靠**的信号（日志里一堆），
+    // 而右键那条路（contextmenu）在 WKWebView 里根本不触发。
+    // 所以"双击"是他一定点得出来的入口。
+    var now2 = Date.now();
+    var isDbl = IS_DESKTOP && !drag.moved && (now2 - lastClickAt) < 400;
+    lastClickAt = now2;
+    if (isDbl) {
+      tell('menu');
+      return;
+    }
 
     if (drag.moved) {
       anim.trigger('released', true);      // 松开 → 下落 + 落地
