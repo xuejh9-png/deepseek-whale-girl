@@ -122,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func installHotKeys() {
         registerHotKey(id: 1, key: UInt32(kVK_ANSI_Q), label: "⌥⌘Q 退出") { NSApp.terminate(nil) }
-        registerHotKey(id: 2, key: UInt32(kVK_ANSI_H), label: "⌥⌘H 跑一下") { [weak self] in
+        registerHotKey(id: 2, key: UInt32(kVK_ANSI_H), label: "⌥⌘H 复位") { [weak self] in
             self?.goHomeOrLap()
         }
     }
