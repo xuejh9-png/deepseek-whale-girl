@@ -67,6 +67,10 @@ LEG_BOT = 365
 # 真正决定像不像跑的是**摆幅**（腿真的在前后动）和**身高起落**（有压低）。
 STRIDE_MIN_POSES = 4
 STRIDE_MIN_COLS = 60    # 任意两帧腿部轮廓至少要差这么多列
+# 两脚跨度（角色底部 12% 高度带里轮廓的左右范围 ÷ 角色高）。
+# 用户反馈"感觉只迈了一只脚"的直接原因：上一版触地帧两脚只差 33% 角色高，
+# 两腿挤在一起 → 画面上读不出"跨步"。实测改宽后 52%。
+STRIDE_SPREAD_MIN = 45
 
 # 「整只被横向压窄」判据（2026-09-23 补）
 # 量的是【角色上 40% 段的宽 / 角色高】—— 头部是刚体，这个比例只该随视角变、
@@ -373,6 +377,30 @@ def main():
                         f"{clip}: 两次腾空间隔不等（{gap1} / {gap2} 帧）"
                         f" → 步时 {gap1/float(m['fps']):.2f}s vs {gap2/float(m['fps']):.2f}s，"
                         f"细看会「跛」")
+
+            # 两脚跨度 —— 直接量"腿到底跨开没有"。
+            # 用户反馈"感觉只迈了一只脚"，根因之一就是两条腿始终挤在一起：
+            # 上一版触地帧两脚只差 33% 角色高，跨不开就读不出跑步。
+            # 量法：角色底部 12% 高度带里轮廓的左右范围 ÷ 角色高。
+            spreads = []
+            for mm2 in metrics:
+                if not mm2 or mm2["air"]:
+                    continue          # 只看接地帧：跨步是在触地那一刻决定的
+                i2 = mm2["idx"] - 1
+                fa = frames[i2][0] > ALPHA_TH
+                band = fa[max(0, mm2["feet"] - int(mm2["h"]*0.12)):mm2["feet"] + 1]
+                bxs = np.where(band.any(axis=0))[0]
+                if len(bxs):
+                    spreads.append((bxs.max()-bxs.min()) / float(mm2["h"]) * 100)
+            if spreads:
+                mx = max(spreads)
+                report.append(f"           两脚跨度 最大 {mx:.0f}% 角色高"
+                              f"（期望 ≥{STRIDE_SPREAD_MIN:.0f}%；"
+                              f"太小 = 两腿挤在一起，读不出跑步）")
+                if mx < STRIDE_SPREAD_MIN:
+                    warns.append(
+                        f"{clip}: 两条腿始终挤在一起（两脚跨度最大只有 {mx:.0f}% 角色高）"
+                        f" → 画面上读不出「跨步」，看着像原地倒腿")
 
             # 身高要有起落 —— 跑步的"压低/伸展"就体现在这里。
             # ⚠️ 之前这条写的是"接地帧脚底起落"，**判据写错了**：
