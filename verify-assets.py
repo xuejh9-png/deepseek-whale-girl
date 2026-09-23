@@ -47,6 +47,8 @@ TOL_HEIGHT_SQUASH = 60
 TOL_SEAM_RATIO = 1.5
 ALPHA_TH = 128
 WIDTH_MAX = 205
+CHANGE_PX_TH = 8        # 单像素变化超过这个值算"这一像素变了"
+MIN_CHANGED_PX = 20     # 一帧里至少这么多像素变了，才算"姿态不同"
 
 
 def load(path, fw, fh, cols, n):
@@ -58,10 +60,28 @@ def load(path, fw, fh, cols, n):
 
 
 def d1(f1, f2):
+    """两帧的【平均】像素差。
+
+    ⚠️ 局限：会被大面积静止区域稀释。
+    "只有几根手指在动"这种刻意做轻的动作，平均差会接近 0 而看不出来
+    —— 所以判断"姿态是否不同"必须用下面的 changed_px()。
+    """
     m = (f1[0] > ALPHA_TH) | (f2[0] > ALPHA_TH)
     if m.sum() == 0:
         return 0.0
-    return float(np.abs(f1[1][:, :, :3] - f2[1][:, :, :3]).mean(axis=2)[m].mean())
+    return float(np.abs(f1[1][:, :, :3].astype(int) - f2[1][:, :, :3].astype(int))
+                 .mean(axis=2)[m].mean())
+
+
+def changed_px(f1, f2):
+    """两帧之间【变化的像素个数】—— 比平均差敏感得多。
+
+    实测：work 重做后手指每帧只变 26~469 个像素（占画布 0.02%~0.37%），
+    平均差被静止区域稀释到 <0.5 而漏判成"没有变化"；
+    换成数像素个数就不会漏。
+    """
+    return int((np.abs(f1[1][:, :, :3].astype(int) - f2[1][:, :, :3].astype(int))
+                .max(axis=2) > CHANGE_PX_TH).sum())
 
 
 def main():
@@ -171,9 +191,12 @@ def main():
             mx = max(inside) if inside else 0
             if seam > mx * TOL_SEAM_RATIO and seam > 1.0:
                 fails.append(f"{clip}: 循环接缝偏大 {seam:.2f}（段内最大 {mx:.2f}）")
-            uniq = 1 + sum(1 for i in range(ls, le) if d1(frames[i-1], frames[i]) > 0.5)
+            # 用"变化像素个数"而不是平均差 —— 否则会漏掉"只有手指在动"的动作
+            chg = [changed_px(frames[i-1], frames[i]) for i in range(ls, le)]
+            uniq = 1 + sum(1 for c in chg if c > MIN_CHANGED_PX)
             total = le - ls + 1
-            note = f"循环 {ls}-{le} 接缝 {seam:.2f} 姿态 {uniq}/{total}"
+            note = (f"循环 {ls}-{le} 接缝 {seam:.2f} 姿态 {uniq}/{total} "
+                    f"帧间变化 {min(chg)}~{max(chg)}px")
             if uniq < total / 3:
                 warns.append(f"{clip}: 循环段只有 {uniq} 个不同姿态（共 {total} 帧）→ 近似二值切换")
         else:
