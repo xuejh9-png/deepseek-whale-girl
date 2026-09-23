@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let originKey = "petWindowOrigin"
     var selfTesting = false
+    var daemonSpawnTried = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)      // 不占 Dock
@@ -378,13 +379,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         URLSession.shared.dataTask(with: req) { [weak self] _, resp, _ in
             guard let self = self else { return }
             let ok = (resp as? HTTPURLResponse)?.statusCode == 200
-            guard ok else { return }
+            if ok {
+                DispatchQueue.main.async {
+                    // 服务在跑 → 换成 http 版本，这样状态联动才生效
+                    self.webView.load(req)
+                    NSLog("WorkBuddyPetOK: 已连接状态服务 \(base)")
+                }
+                return
+            }
+            // 服务不在 —— 自己拉一个起来。
+            // 不然她永远是"独立模式"：宠物照常活着但不跟 Agent 状态联动，
+            // 而那恰恰是这个工具的主要价值。只在第一次探测失败时尝试，避免反复拉起。
             DispatchQueue.main.async {
-                // 服务在跑 → 换成 http 版本，这样状态联动才生效
-                self.webView.load(req)
-                NSLog("WorkBuddyPetOK: 已连接状态服务 \(base)")
+                guard !self.daemonSpawnTried else { return }
+                self.daemonSpawnTried = true
+                self.spawnDaemon()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    self?.probeDaemon()
+                }
             }
         }.resume()
+    }
+
+    /// 找不到状态服务就自己起一个（等价于双击 启动桌面宠物.command 里那一步）
+    func spawnDaemon() {
+        let root = projectRoot()
+        let script = root.appendingPathComponent("pet_daemon.py")
+        guard FileManager.default.fileExists(atPath: script.path) else {
+            NSLog("WorkBuddyPetWARN: 找不到 pet_daemon.py，只能以独立模式运行")
+            return
+        }
+        // 与 启动桌面宠物.command 保持同一份候选顺序
+        let candidates = [
+            "\(NSHomeDirectory())/.local/bin/python3",
+            "\(NSHomeDirectory())/.workbuddy/binaries/python/versions/3.13.12/bin/python3",
+            "/opt/homebrew/bin/python3",
+            "/usr/bin/python3",
+        ]
+        guard let py = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+                ?? Self.whichPython() else {
+            NSLog("WorkBuddyPetWARN: 找不到 python3，只能以独立模式运行")
+            return
+        }
+
+        let port = URL(string: baseURL)?.port ?? 8791
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: py)
+        p.arguments = [script.path, "--port", "\(port)"]
+        p.currentDirectoryURL = root
+        // 日志别丢：服务起不来时这是唯一的线索
+        let logPath = "/tmp/workbuddy-pet.log"
+        if !FileManager.default.fileExists(atPath: logPath) {
+            FileManager.default.createFile(atPath: logPath, contents: nil)
+        }
+        if let fh = FileHandle(forWritingAtPath: logPath) {
+            p.standardOutput = fh
+            p.standardError = fh
+        }
+        do {
+            try p.run()
+            NSLog("WorkBuddyPetOK: 已自动拉起状态服务 pid=\(p.processIdentifier)（\(py)）")
+        } catch {
+            NSLog("WorkBuddyPetWARN: 拉起状态服务失败 \(error.localizedDescription)")
+        }
+    }
+
+    /// 兜底：从 PATH 里找 python3
+    static func whichPython() -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["which", "python3"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        do { try p.run() } catch { return nil }
+        p.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (s?.isEmpty == false) ? s : nil
     }
 
     // MARK: 鼠标穿透 —— 只有角色所在的区域吃鼠标事件
