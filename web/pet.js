@@ -86,8 +86,14 @@
   function poll() {
     fetch(API + '/state', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (s) { anim.setState(((s || {}).agent || {}).state); })
-      .catch(function () { anim.setState('offline'); });
+      .then(function (s) {
+        var a = (s || {}).agent || {};
+        anim.setState(a.state);
+        // 顺带把状态推给宿主，右键菜单里就能显示"她此刻在干什么"
+        tell('state', { state: a.state, label: a.label, task: a.task,
+                        source: (s || {}).source });
+      })
+      .catch(function () { anim.setState('offline'); tell('state', { state: 'offline' }); });
   }
 
   function startPolling() {
@@ -196,4 +202,21 @@
   ['pointerup', 'pointercancel'].forEach(function (t) {
     document.addEventListener(t, function () { clearTimeout(pressTimer); });
   });
+
+  /* ---------------- 宿主 → 网页 的事件 ----------------
+     Swift 用 evaluateJavaScript 调 window.petHostEvent(name, payload)。
+     目前只服务「跑回初始位置」：**窗口移动是宿主的活，动画是网页的活**，
+     两边各管一半，不互相猜。 */
+
+  window.petHostEvent = function (name, payload) {
+    payload = payload || {};
+    if (name === 'runStart') {
+      // dir < 0 = 向左跑。运行时按 manifest 的 flipForLeft 决定是否翻转。
+      anim.trigger(payload.dir < 0 ? 'runLeft' : 'runRight', true);
+    } else if (name === 'runEnd') {
+      // run 是循环剪辑，自己永远不会"播完"，必须由宿主显式收尾，
+      // 否则她会一直原地跑（和之前 drag 不落地的坑同一个成因）。
+      anim.clearActions();
+    }
+  };
 })();

@@ -143,6 +143,38 @@
   anim.trigger('clicked', true);           // 后续动作仍应能启动
   ok('缺素材动作不阻塞后续动作', anim.clipName === 'click', anim.clipName);
 
+  // ---- 13b. 朝向：manifest 声明 flipForLeft 的剪辑，向左播必须真翻转 ----
+  // 回归：`flipForLeft` 一直在 manifest 里声明、ASSET_SPEC 也写了，
+  // 但运行时从来没实现过 —— 向左跑会变成"倒着滑"。
+  // ⚠️ 必须断言**真正写进 DOM 的 --pet-flip**（CSS 靠它做 scaleX），
+  //    只断言 clipName / facing 内部字段是抓不到这个 bug 的。
+  var MAN2 = JSON.parse(JSON.stringify(MAN));
+  MAN2.clips.run = { file: sheet('#777'), frameCount: 12, rows: 2, fps: 16,
+                     loop: true, loopStart: 1, loopEnd: 12, flipForLeft: true };
+  var anim2 = new PetAnimation({
+    spriteEl: document.getElementById('petSprite'),
+    rootEl: document.getElementById('pet'),
+    basePath: '', manifestUrl: 'data:application/json,{}'
+  });
+  anim2.manifest = MAN2;
+  function flip() { return anim2.root.style.getPropertyValue('--pet-flip'); }
+
+  anim2.setState('idle');
+  anim2.trigger('runRight', true);
+  ok('向右跑不翻转', anim2.clipName === 'run' && flip() === '1',
+     anim2.clipName + '/flip=' + flip());
+
+  anim2.trigger('runLeft', true);
+  ok('向左跑水平翻转', flip() === '-1', 'flip=' + flip());
+  ok('向左跑确实在播 run', anim2.clipName === 'run', anim2.clipName);
+
+  anim2.clearActions();                   // 宿主在跑动结束时调的就是这个
+  ok('跑完回到状态剪辑且朝向复位', anim2.clipName === 'idle' && flip() === '1',
+     anim2.clipName + '/flip=' + flip());
+
+  anim2.trigger('clicked', true);         // 未声明 flipForLeft 的剪辑
+  ok('未声明 flipForLeft 的剪辑不翻转', flip() === '1', 'flip=' + flip());
+
   // ---- 14. 画面上到底是不是当前剪辑的 sheet ----
   // 回归：曾经只在"首次加载"时设 backgroundImage，
   // 切回已缓存的剪辑就沿用上一张 sheet —— 帧号按新剪辑走、画面却是旧剪辑，

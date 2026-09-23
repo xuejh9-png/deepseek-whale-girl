@@ -51,6 +51,10 @@ html, body {
   transform-origin: 50% 100%;
   transition: filter .25s ease;
   animation: petBreathe 3.8s ease-in-out infinite;
+  /* 跑动朝向：manifest 里声明 flipForLeft 的剪辑（run），向左播放时水平翻转。
+     ⚠️ 这一层**故意不加 transition** —— 转身必须"瞬间完成"。
+     若加 .3s 过渡，scaleX 从 1 走到 -1 会经过 0，被看成"横向压扁再弹回来"。 */
+  transform: scaleX(var(--pet-flip, 1));
 }
 .pet.dragging .pet-body { cursor: grabbing; }
 

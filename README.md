@@ -78,6 +78,26 @@ macOS 上也可以**双击 `查看用量.command`**。
 - **⌥⌘Q**（Option+Command+Q）退出
 - 默认**只看到她**，没有卡片、没有数字面板
 
+### 菜单与「她丢不了」
+
+右键 / 长按唤出的菜单：
+
+| 菜单项 | 说明 |
+|---|---|
+| 当前：执行中 · 帮我改个函数 | **只读**一行，直接告诉她此刻在干什么（含当前任务名） |
+| 回到初始位置 | 她**跑**回右下角（真的跑，不是瞬移） |
+| 置顶显示 / 取消置顶 | 切换是否压在其他窗口之上 |
+| 退出桌面宠物 | 等同 ⌥⌘Q |
+
+两条防丢机制 —— 桌宠最大的可用性问题其实是**找不回来**：
+
+- **拖不出屏幕**：拖动时至少留 48×56px 在屏幕内，不可能被拖到看不见的地方
+- **记住位置**：关掉再打开回到你上次放她的地方，不再跳回右下角。
+  换显示器 / 改分辨率后旧坐标会失效，这时自动回落到默认位（并写日志说明原因）
+
+> 跑回原位用的是 `run` 剪辑。向左跑时会按 manifest 的 `flipForLeft`
+> **水平翻转**，否则会变成"倒着滑"。
+
 ### 不用 WorkBuddy 也能跑
 
 宠物本体**不依赖 WorkBuddy**。克隆下来直接双击 `pet.html` 就能看到一只
@@ -178,12 +198,32 @@ web/pet.js              胶水层：拉状态 + 指针事件 + 宿主通信
 desktop/main.swift      Swift 透明窗口宿主（无边框 / 置顶 / 鼠标穿透 / 全局快捷键）
 assets/pet/             角色素材（10 个 Sprite Sheet + manifest.json / manifest.js）
 
-verify-assets.py        素材逐帧验收（几何 / 循环接缝 / 透明度）
+verify-assets.py        素材逐帧验收（几何 / 循环接缝 / 透明度 / 可见性下限）
 intake-assets.py        素材自动接收入库（只自动新增，永不覆盖已有素材）
 build-manifest-js.py    manifest.json → manifest.js（让 file:// 也能读到）
-pet-runtime.test.html   动画运行时回归测试（28 项）
+pet-runtime.test.html   动画运行时回归测试（33 项）
+pet-bridge.test.html    宿主 ↔ 网页 桥的回归测试（12 项）
 pet_sources.test.py     状态推断回归测试（13 项）
 ```
+
+### 回归怎么跑
+
+前两个测试是网页，**直接双击用浏览器打开**即可（不需要 daemon），
+结果写在页面标题里：`RESULT|PASS=n|FAIL=n|ALL_OK`。
+
+窗口宿主（Swift）那边另有两项自检，不需要用鼠标点菜单就能验：
+
+```bash
+desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-runhome
+#   挪开一段距离再跑回初始位置，打印轨迹后退出
+#   期望：monotonic=Y landed=Y yOK=Y BAD=0
+
+desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-save
+#   写入一次当前位置并退出，用于验证「程序自己写、程序自己读」的位置记忆
+```
+
+> ⚠️ **不要用 `defaults write … -array 400 220` 去造位置数据** ——
+> 它会把数字存成**字符串**，验到的不是真实链路。要造数据就用 `--selftest-save`。
 
 ### 依赖
 
@@ -202,6 +242,12 @@ pet_sources.test.py     状态推断回归测试（13 项）
 - **素材自动接入只做新增，永不覆盖**：
   这条是被一次真实的数据覆盖事故逼出来的 ——
   一个只判断"来源与本地是否不同"的自动化，在本地比来源更新时会**必然**造成回退
+- **每条"放弃"的路径都要留下日志**：
+  静默 `return nil` / `return` 会让故障变成一个查不出的现象。
+  「位置记不住」这一条就是靠日志才发现真正原因是数据格式不对，而不是逻辑错
+- **测试要自足**：网页回归测试不该依赖本机有没有跑状态服务。
+  之前 `pet-bridge.test.html` 会真去连 `127.0.0.1:8791`，
+  在没跑服务的机器上结果不同，而且定时器一直有活干会让无头浏览器**永不退出**
 - **颜色约定**：涨用红、跌用绿（A 股习惯）
 
 ---
