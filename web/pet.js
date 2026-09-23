@@ -23,6 +23,7 @@
   var host = (window.webkit && window.webkit.messageHandlers &&
               window.webkit.messageHandlers.petHost) || null;
   var IS_DESKTOP = !!host;
+  pet.classList.toggle('has-host', IS_DESKTOP);
 
   function tell(cmd, extra) {
     if (!host) return;
@@ -173,4 +174,17 @@
     e.preventDefault();
     tell('menu');
   });
+
+  // 关闭按钮：退出桌面宠物
+  // （无边框窗口没有系统关闭按钮，这是最直观的退出入口）
+  var quitBtn = document.getElementById('petQuit');
+  if (quitBtn) {
+    quitBtn.addEventListener('pointerdown', function (e) {
+      e.stopPropagation();          // 别让它触发拖拽
+    });
+    quitBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      tell('quit');
+    });
+  }
 })();

@@ -115,6 +115,37 @@ html, body {
   75%      { transform: translateX(2.5px); }
 }
 
+/* ---------- 关闭按钮 ----------
+   无边框窗口没有系统关闭按钮，所以给一个。默认完全隐藏（保持"只看到角色"），
+   鼠标移到角色上才淡入 —— 找不到退出方式是真实的用户卡点。 */
+.pet-quit {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .88);
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .16s ease, background .16s ease, color .16s ease;
+  box-shadow: 0 1px 4px rgba(20, 30, 60, .18);
+  z-index: 3;
+}
+.pet:hover .pet-quit { opacity: 1; }
+.pet-quit:hover { background: #ef4444; color: #fff; }
+.pet-quit:focus-visible { opacity: 1; outline: 2px solid var(--pet-accent, #2b6cff); }
+/* 浏览器里（无宿主）没有"退出"这回事，直接不显示 */
+.pet:not(.has-host) .pet-quit { display: none; }
+
 /* ---------- 状态特效：浮在角色头顶的画布留白区里 ---------- */
 .pet-fx {
   position: absolute;

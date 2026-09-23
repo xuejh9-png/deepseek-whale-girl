@@ -105,13 +105,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !dragging else { return }
         let mouse = NSEvent.mouseLocation
         let f = window.frame
-        // 角色本体在画布里的位置：x 25%~75%，y（自底）10%~74%。
-        // 命中区只覆盖角色，其余区域穿透鼠标。
-        let hit = NSRect(x: f.minX + f.width * 0.23,
-                         y: f.minY + f.height * 0.07,
-                         width: f.width * 0.54,
-                         height: f.height * 0.70)
-        window.ignoresMouseEvents = !hit.contains(mouse)
+        // 角色本体在画布里的位置：x 25%~75%，y（自底）10%~75%
+        let hitBody = NSRect(x: f.minX + f.width * 0.23,
+                             y: f.minY + f.height * 0.07,
+                             width: f.width * 0.54,
+                             height: f.height * 0.70)
+        // 右上角的关闭按钮（.pet-quit：top/right 各 2px、18×18）——
+        // 它在画布留白区里，默认是穿透的，必须单独纳入命中区才点得到
+        let hitQuit = NSRect(x: f.maxX - 26,
+                             y: f.maxY - 26,
+                             width: 26, height: 26)
+        window.ignoresMouseEvents = !(hitBody.contains(mouse) || hitQuit.contains(mouse))
     }
 
     // MARK: 处理网页指令
@@ -135,6 +139,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "menu":
             dragging = false
             showMenu()
+
+        case "quit":
+            // 网页上的关闭按钮（悬停在角色右上角出现）
+            dragging = false
+            NSApp.terminate(nil)
 
         default:
             break
