@@ -415,6 +415,17 @@ def build_html(agg, title, meta):
   details.fold[open]>summary .hint::after{content:" ▴"}
   .fold-body{padding:16px 20px 20px}
   footer{color:var(--muted);font-size:12px;text-align:center;margin-top:24px}
+  /* 快照提示条：这个页面**不会自动更新**，必须显眼说出来，
+     否则用户会以为统计坏了（真实发生过：盯着上午 10:50 的文件看了一整天）*/
+  .freshbar{margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    background:#fff8e6;border:1px solid #f2d99a;border-radius:10px;
+    padding:9px 13px;font-size:13px;color:#7a5b12}
+  .freshbar b{color:#5c4207}
+  .freshbar button{margin-left:auto;font:inherit;font-size:13px;font-weight:600;
+    cursor:pointer;color:#1f2937;background:#fff;border:1px solid #d8d2c2;
+    border-radius:8px;padding:5px 12px}
+  .freshbar button:hover{background:#fffdf7;border-color:#b9ae95}
+  .freshbar button:disabled{opacity:.55;cursor:default}
 </style>
 </head>
 <body>
@@ -422,6 +433,10 @@ def build_html(agg, title, meta):
   <header>
     <h1>__H1__</h1>
     <div class="meta">统计周期 __TITLE__　·　数据范围 __FIRST__ ~ __LAST__　·　生成于 __GEN__</div>
+    <div class="freshbar" id="freshbar" hidden>
+      <span id="freshMsg">…</span>
+      <button id="regenBtn" type="button">重新统计</button>
+    </div>
   </header>
 
   <div class="cards">
@@ -484,12 +499,57 @@ __HEAT_SECTION__  <section>
 
   <footer>数据来源：WorkBuddy 本地会话记录（每次调用的输入 / 输出 token）</footer>
 </div>
+<script>
+/* 「重新统计」按钮。
+   这个报告是**生成那一刻的快照**，不重写就永远停在那儿 ——
+   用户因此以为统计坏了（真实发生过）。所以：
+     ① 显眼标出"多久前生成的"
+     ② 给一个一键重算入口，走本地状态服务的 /regenerate
+     ③ 服务没在跑就明说怎么办，绝不静默失败
+   注意：file:// 打开的页面也能 fetch 本地服务（服务端带了 CORS *），
+   所以双击 html 看报告时这个按钮同样管用。 */
+(function () {
+  var bar = document.getElementById('freshbar');
+  var msg = document.getElementById('freshMsg');
+  var btn = document.getElementById('regenBtn');
+  if (!bar || !msg || !btn) return;
+  var GEN_MS = __GEN_MS__;
+  var API = 'http://127.0.0.1:8791';
+  bar.hidden = false;
+
+  function ageText() {
+    var m = Math.floor((Date.now() - GEN_MS) / 60000);
+    if (m < 1) return '刚刚';
+    if (m < 60) return m + ' 分钟前';
+    return Math.floor(m / 60) + ' 小时前';
+  }
+  msg.innerHTML = '这份数字生成于 <b>' + ageText() + '</b>，不会自动更新';
+
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    msg.innerHTML = '正在重新扫描本地记录…（几秒钟）';
+    fetch(API + '/regenerate', { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
+      .then(function (d) {
+        if (!d || d.ok === false) throw new Error((d && d.error) || 'failed');
+        location.reload();
+      })
+      .catch(function () {
+        btn.disabled = false;
+        msg.innerHTML = '连不上本地状态服务 —— 双击项目里的 <b>查看用量.command</b> ' +
+                        '重新统计，然后刷新本页';
+      });
+  });
+})();
+</script>
 </body>
 </html>
 """
     repl = {
         "__TITLE__": html.escape(title), "__FIRST__": first, "__LAST__": last,
         "__GEN__": generated,
+        # 给页面里的 JS 用：算"这份快照多久前生成的"
+        "__GEN_MS__": str(int(dt.datetime.now().timestamp() * 1000)),
         "__TOTAL_H__": human(agg["total"]), "__TOTAL__": comma(agg["total"]),
         "__PEAK_H__": human(agg["peak_val"]), "__PEAK_DAY__": agg["peak_day"],
         "__DUR__": fmt_dur(agg["longest_sec"]),
@@ -529,6 +589,42 @@ def resolve_range(args):
     return "%s 年 %s 月" % (y, int(m)), lambda w: start <= w < end
 
 
+def generate(all_models=False, all_=False, days=None, out=None, write_html=True):
+    """扫描本地记录 → 聚合 → 写出报告 HTML。返回 (agg, title, path, meta)。
+
+    为什么抽成函数：**报告是"生成那一刻"的快照，不重写就永远停在那儿。**
+    真实踩过 —— 用户上午 10:50 生成过一次，之后一直在看那个文件，
+    以为统计坏了（"今天这么大的量怎么不算了"）。
+    所以状态服务要能在用户点「重新统计」时就地重算一遍。
+    """
+    if not os.path.isdir(PROJECTS_DIR):
+        raise RuntimeError("找不到目录：%s" % PROJECTS_DIR)
+
+    class _Args:                       # resolve_range 只用到这三个属性
+        pass
+    a = _Args()
+    a.all, a.days, a.month = all_, days, None
+
+    title, within = resolve_range(a)
+    meta = load_session_meta()
+    records = [r for r in iter_calls() if within(r["when"])]
+    if all_models:
+        title += "　·　全部模型"
+    else:
+        records = [r for r in records if is_deepseek(r["model"])]
+        title += "　·　仅 DeepSeek"
+    agg = aggregate(records)
+
+    path = out or OUT_HTML
+    if write_html:
+        html_out = build_html(agg, title, meta)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(html_out)
+        os.replace(tmp, path)          # 原子替换：别让"正在写的半成品"被浏览器读到
+    return agg, title, path, meta
+
+
 def main():
     ap = argparse.ArgumentParser(description="WorkBuddy token 用量统计")
     ap.add_argument("--month", help="指定月份，如 2026-09")
@@ -543,29 +639,19 @@ def main():
         print("找不到目录：%s" % PROJECTS_DIR)
         sys.exit(1)
 
-    title, within = resolve_range(args)
-    meta = load_session_meta()
-    records = [r for r in iter_calls() if within(r["when"])]
-    if args.all_models:
-        title += "　·　全部模型"
-    else:
-        records = [r for r in records if is_deepseek(r["model"])]
-        title += "　·　仅 DeepSeek"
-    agg = aggregate(records)
-
+    # 走同一个 generate() —— 命令行和网页上那个「重新统计」按钮
+    # 必须是同一条代码路径，否则两边数字会悄悄不一致
+    agg, title, path, meta = generate(all_models=args.all_models,
+                                      all_=args.all, days=args.days,
+                                      write_html=not args.no_html)
     print_terminal(agg, title, meta)
 
     if not args.no_html:
-        out = build_html(agg, title, meta)
-        tmp = OUT_HTML + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(out)
-        os.replace(tmp, OUT_HTML)
-        print("  报告已生成：%s" % OUT_HTML)
+        print("  报告已生成：%s" % path)
         if args.open:
-            rc = os.system('open "%s"' % OUT_HTML)
+            rc = os.system('open "%s"' % path)
             if rc != 0:
-                print("  自动打开失败，请手动双击：%s" % OUT_HTML)
+                print("  自动打开失败，请手动双击：%s" % path)
 
 
 if __name__ == "__main__":

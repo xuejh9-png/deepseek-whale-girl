@@ -87,6 +87,34 @@ def usage_snapshot():
         return data
 
 
+# ---------------------------------------------------------------- 重新统计
+
+_regen_lock = threading.Lock()
+
+
+def regenerate_report():
+    """重新扫描本地记录、重写用量报告.html。
+
+    报告页是**生成那一刻的快照**，不重写就永远停在那儿 ——
+    用户盯着上午 10:50 的文件看了一整天，会直接认为"统计坏了"。
+    所以页面上的「重新统计」按钮打到这里。
+
+    用非阻塞锁：扫盘要几秒，连点两次不该排两次队。
+    """
+    if not _regen_lock.acquire(blocking=False):
+        return {"ok": False, "error": "已经有一次重新统计在进行中，稍等一下"}
+    try:
+        agg, title, path, _meta = US.generate()
+        _usage_cache["ts"] = 0.0                 # 顺手让 /usage 的缓存失效
+        return {"ok": True, "generatedAt": int(time.time() * 1000),
+                "totalTokens": agg["total"], "calls": agg["calls"],
+                "title": title, "path": path}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    finally:
+        _regen_lock.release()
+
+
 # ---------------------------------------------------------------- 状态组装
 
 def build_state():
@@ -144,6 +172,8 @@ class PetHandler(SimpleHTTPRequestHandler):
             return self._json(build_state())
         if path in ("/usage", "/api/usage"):
             return self._json(build_usage())
+        if path in ("/regenerate", "/api/regenerate"):
+            return self._json(regenerate_report())
         if path in ("/health", "/version"):
             return self._json({"ok": True, "version": "pet-3.0",
                                "source": _source.name if _source else None})
