@@ -175,16 +175,25 @@
     tell('menu');
   });
 
-  // 关闭按钮：退出桌面宠物
-  // （无边框窗口没有系统关闭按钮，这是最直观的退出入口）
-  var quitBtn = document.getElementById('petQuit');
-  if (quitBtn) {
-    quitBtn.addEventListener('pointerdown', function (e) {
-      e.stopPropagation();          // 别让它触发拖拽
-    });
-    quitBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      tell('quit');
-    });
-  }
+  /* 长按 800ms 唤出原生菜单（置顶 / 退出）—— 不需要可见按钮，
+     也不像右键那样要求用户先知道"可以右键"。
+     注意：**不要在 pointermove 时清计时器** —— 按住时手指/鼠标抖 1px
+     就会触发 pointermove，长按会永远按不出来。
+     改成让计时器自己检查 drag.moved：真拖动了就不弹菜单。 */
+  var pressTimer = null;
+  body.addEventListener('pointerdown', function () {
+    if (!IS_DESKTOP) return;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(function () {
+      if (drag.on && !drag.moved) {      // 按住且没移动 = 长按
+        drag.on = false;                 // 吃掉这次手势，pointerup 不再触发点击/松手
+        pet.classList.remove('dragging');
+        tell('dragEnd');
+        tell('menu');
+      }
+    }, 800);
+  });
+  ['pointerup', 'pointercancel'].forEach(function (t) {
+    document.addEventListener(t, function () { clearTimeout(pressTimer); });
+  });
 })();

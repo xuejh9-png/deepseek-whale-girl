@@ -7,6 +7,7 @@
 
 import Cocoa
 import WebKit
+import Carbon.HIToolbox
 
 let DEFAULT_URL = "http://127.0.0.1:8791/"
 
@@ -39,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var dragStartWin = NSPoint.zero
     var pinned = true
     var moveMonitor: Any?
+    var quitHotKey: EventHotKeyRef?
+    var quitHotKeyHandler: EventHandlerRef?
 
     // 窗口 = 素材画布的实际显示尺寸（320×400 画布 @ 0.5 缩放）。
     // 角色本体占画布高度 64%，对应屏幕高度 128 CSS px。
@@ -52,6 +55,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildWindow()
         loadPage()
         watchMouse()
+        installQuitHotKey()
+    }
+
+    // MARK: 退出快捷键 ⌥⌘Q
+    //
+    // 无边框窗口没有系统关闭按钮，之前加过一个"悬停才现的 ×"，
+    // 用户反馈它破坏观感 —— 改成全局快捷键：
+    // 用 Carbon 注册，**不需要窗口获得焦点**，所以不会把你正在用的窗口抢走。
+    // 另有右键 / 长按 800ms 唤出菜单作为备用入口。
+
+    func installQuitHotKey() {
+        let sig = OSType(0x5742_5054)              // 'WBPT'
+        let hotKeyID = EventHotKeyID(signature: sig, id: 1)
+        let mods: UInt32 = UInt32(optionKey | cmdKey)   // ⌥⌘
+        let st = RegisterEventHotKey(UInt32(kVK_ANSI_Q), mods, hotKeyID,
+                                     GetEventDispatcherTarget(), 0, &quitHotKey)
+        guard st == noErr else {
+            NSLog("WorkBuddyPetPANIC: 快捷键注册失败(\(st))，请用右键菜单退出")
+            return
+        }
+        NSLog("WorkBuddyPetOK: 退出快捷键 ⌥⌘Q 已注册")
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                                 eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetEventDispatcherTarget(), { _, _, _ -> OSStatus in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+            return noErr
+        }, 1, &spec, nil, &quitHotKeyHandler)
     }
 
     // MARK: 窗口
@@ -105,17 +135,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !dragging else { return }
         let mouse = NSEvent.mouseLocation
         let f = window.frame
-        // 角色本体在画布里的位置：x 25%~75%，y（自底）10%~75%
-        let hitBody = NSRect(x: f.minX + f.width * 0.23,
-                             y: f.minY + f.height * 0.07,
-                             width: f.width * 0.54,
-                             height: f.height * 0.70)
-        // 右上角的关闭按钮（.pet-quit：top/right 各 2px、18×18）——
-        // 它在画布留白区里，默认是穿透的，必须单独纳入命中区才点得到
-        let hitQuit = NSRect(x: f.maxX - 26,
-                             y: f.maxY - 26,
-                             width: 26, height: 26)
-        window.ignoresMouseEvents = !(hitBody.contains(mouse) || hitQuit.contains(mouse))
+        // 角色本体在画布里的位置：x 25%~75%，y（自底）10%~75%。
+        // 只让这一块吃鼠标事件，其余（含画布留白）全部穿透。
+        let hit = NSRect(x: f.minX + f.width * 0.23,
+                         y: f.minY + f.height * 0.07,
+                         width: f.width * 0.54,
+                         height: f.height * 0.70)
+        window.ignoresMouseEvents = !hit.contains(mouse)
     }
 
     // MARK: 处理网页指令
@@ -161,6 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         let quit = NSMenuItem(title: "退出桌面宠物",
                               action: #selector(quitApp), keyEquivalent: "q")
+        quit.keyEquivalentModifierMask = [.option, .command]   // 菜单里显示 ⌥⌘Q
         quit.target = self
         menu.addItem(quit)
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
