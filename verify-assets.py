@@ -31,7 +31,7 @@ except ImportError:
 
 # 各剪辑的离地帧（1 基）。不在表里的 = 全程接地。
 AIRBORNE = {
-    'run':     [5, 10],                 # Airborne 相位
+    'run':     [4, 10],                 # Airborne 相位：12 帧双步循环，间隔各 6 帧
     'jump':    [5, 6, 7, 8, 9],         # 上升 / 顶点 / 下落
     'drag':    list(range(2, 13)),      # 起吊后全程悬空
     'success': [4, 5, 6, 7, 8],         # 跳起
