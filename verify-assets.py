@@ -67,7 +67,10 @@ LEG_BOT = 365
 # 两步循环里这 4 个形状各出现两次。所以约束"姿态数"没有意义 ——
 # 真正决定像不像跑的是**摆幅**（腿真的在前后动）和**身高起落**（有压低）。
 STRIDE_MIN_POSES = 4
-STRIDE_MIN_COLS = 60    # 任意两帧腿部轮廓至少要差这么多列
+STRIDE_MIN_COLS = 60    # 仅作报告参考：长裙摆会把列差压小，不能只靠它下结论
+# 走"小步快跑"时，**脚的实际位移**才是"腿有没有在动"的有效证据（2026-09-23 补）。
+# 例：新素材轮廓列差只有 23 列（裙子挡住了大半条腿），但脚其实走了 87px。
+FOOT_TRAVEL_MIN = 40
 # 两脚跨度（角色底部 12% 高度带里轮廓的左右范围 ÷ 角色高）。
 # 用户反馈"感觉只迈了一只脚"的直接原因：上一版触地帧两脚只差 33% 角色高，
 # 两腿挤在一起 → 画面上读不出"跨步"。实测改宽后 52%。
@@ -185,7 +188,44 @@ def stride_profile(path, fw, fh, cols, n, leg_top=LEG_TOP, leg_bot=LEG_BOT):
     for i in range(n):
         for j in range(i + 1, n):
             maxcols = max(maxcols, int((sigs[i] != sigs[j]).sum()))
-    return len(reps), maxcols
+
+    # —— 脚的真实位移（2026-09-23 补）——
+    # ⚠️ 为什么光看"轮廓列差"不够：长裙摆会盖住大半条腿，
+    # 两脚在同一段列范围里换位时，列差可能只有 23 列，看着像"腿没动"，
+    # 但脚其实已经走了 87px。所以要直接量**鞋的位置变化**。
+    # 做法：在腿部区域里找深蓝鞋子像素，按列分块，取各块中心；统计帧间最大位移。
+    rgbf = np.array(Image.open(path).convert("RGB")).astype(int)
+    centers = []
+    for i in range(n):
+        r, c = divmod(i, cols)
+        cell = rgbf[r*fh+leg_top:r*fh+fh, c*fw:(c+1)*fw]
+        al = A[r*fh+leg_top:r*fh+fh, c*fw:(c+1)*fw]
+        R, G, B = cell[:, :, 0], cell[:, :, 1], cell[:, :, 2]
+        shoe = al & (R < 115) & (G < 125) & (B > 85) & (B > R + 10)
+        cols_any = shoe.any(axis=0)
+        segs, run, st = [], False, 0
+        for k, v in enumerate(cols_any):
+            if v and not run:
+                run, st = True, k
+            elif not v and run:
+                run = False
+                if k - st >= 4:
+                    segs.append((st, k))
+        if run and len(cols_any) - st >= 4:
+            segs.append((st, len(cols_any)))
+        merged = []
+        for s in segs:
+            if merged and s[0] - merged[-1][1] <= 8:
+                merged[-1] = (merged[-1][0], s[1])
+            else:
+                merged.append(list(s))
+        centers.append([(s[0]+s[1])//2 for s in merged])
+    maxfoot = 0
+    for i in range(n):
+        a1, a2 = centers[i], centers[(i+1) % n]
+        if a1 and a2:
+            maxfoot = max(maxfoot, max(abs(x-y) for x in a1 for y in a2))
+    return len(reps), maxcols, maxfoot
 
 
 def main():
@@ -351,12 +391,12 @@ def main():
 
         # 位移类剪辑（manifest 里标了 flipForLeft 的）额外量步幅
         if m.get("flipForLeft"):
-            poses, maxcols = stride_profile(os.path.join(root, m["file"]), FW, FH, COLS, n)
-            report.append(f"           腿部位移 {poses} 个姿态 / 最大摆幅 {maxcols} 列"
-                          f"（期望 ≥{STRIDE_MIN_POSES} 个、≥{STRIDE_MIN_COLS} 列）")
-            if poses < STRIDE_MIN_POSES or maxcols < STRIDE_MIN_COLS:
+            poses, maxcols, maxfoot = stride_profile(os.path.join(root, m["file"]), FW, FH, COLS, n)
+            report.append(f"           腿部 {poses} 个姿态 / 轮廓列差 {maxcols} / "
+                          f"脚帧间位移 {maxfoot}px（脚位移是主判据，期望 ≥{FOOT_TRAVEL_MIN}px）")
+            if poses < STRIDE_MIN_POSES or maxfoot < FOOT_TRAVEL_MIN:
                 warns.append(
-                    f"{clip}: 腿几乎没有前后摆动（{poses} 个姿态、最大摆幅 {maxcols} 列）"
+                    f"{clip}: 腿几乎没有前后摆动（{poses} 个姿态、脚帧间位移只有 {maxfoot}px）"
                     f" → 运行时是「上下弹着平移」而不是跑，见 docs/run-返工说明.md")
 
             # 两次腾空必须等间隔 —— 不然一条腿的步时比另一条长，细看会"跛"。

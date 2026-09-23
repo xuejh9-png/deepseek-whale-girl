@@ -25,3 +25,9 @@ assets/.backup/
 # 编辑器
 .vscode/
 .idea/
+
+# 外部交付包里的重体积文件（34MB，不入库；另有说明文档与单帧保留）
+assets/run-12-final/*.zip
+assets/run-12-final/*.html
+assets/run-12-final/*.webp
+assets/run-12-final/*.png
