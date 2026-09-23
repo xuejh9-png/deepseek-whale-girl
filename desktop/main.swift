@@ -71,6 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var runTo = NSPoint.zero
     var runT0 = Date()
     var runDur: TimeInterval = 0
+    /// 一个跑步动画周期多长（秒）。由网页上报，见 refreshRunCycle()。
+    var runCycleSeconds: TimeInterval = 0.75
 
     // 窗口 = 素材画布的实际显示尺寸（320×400 画布 @ 0.5 缩放）。
     // 角色本体占画布高度 64%，对应屏幕高度 128 CSS px。
@@ -369,14 +371,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 跑动速度：**按整个动画周期对齐**，不要停在迈步中间。
     ///
-    /// run 是 12 帧 @16fps → 一个完整跑步周期 0.75 秒。
-    /// 如果时长不是周期的整数倍，她会在"迈到一半"的位置停住 ——
-    /// 看起来就是滑过去而不是跑过去。
-    /// 反过来，每一周期的位移（步幅）也要在合理范围内：
-    /// 角色显示宽约 100px，一个周期走 ~180px（≈1.8 个身宽）比较像真在跑；
-    /// 走太远会变成"腿在原地倒、人在飘"。
+    /// ⚠️ 周期值由**网页**提供（`window.petRunCycleSeconds()`，见 pet.js）。
+    /// 之前这里写死了 12.0/16.0 而注释却写着"跟随 manifest" ——
+    /// 素材换成 8 帧 / 11fps 后位移和迈步就对不上，看起来发飘。这类"注释撒谎"
+    /// 是最难查的一档，所以宁可多一次跨进程调用也不写死。
     func runDuration(for dx: CGFloat) -> TimeInterval {
-        let cycle = 12.0 / 16.0                 // 秒/周期，跟随 manifest 的帧数与 fps
+        let cycle = max(0.2, runCycleSeconds)
         let stridePerCycle: CGFloat = 180       // 每个动画周期的目标位移
         let cycles = max(1.0, (abs(dx) / stridePerCycle).rounded())
         return min(6.0, max(cycle, cycles * cycle))
@@ -400,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let speed = abs(dx) / CGFloat(max(0.01, runDur))
         petLog(String(format: "跑动%@ dir=%d dx=%d 用时%.2fs（%.0f px/s，%.1f 个跑步周期）",
                       continuing ? "折返" : "开始", dir, Int(dx), runDur,
-                      speed, runDur / (12.0 / 16.0)))
+                      speed, runDur / max(0.2, runCycleSeconds)))
 
         runTimer?.invalidate()
         runTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] t in
@@ -638,6 +638,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.setFrameOrigin(clampOrigin(window.frame.origin))
             saveOrigin()                      // 记住这次放的位置
             updatePassthrough()
+
+        case "runCycle":
+            // 网页上报"一个跑步动画周期多长"（秒）。只报一次，见 pet.js。
+            if let s = body["seconds"] as? Double, s > 0.05 {
+                runCycleSeconds = s
+                petLog(String(format: "跑步周期 %.3fs（由网页上报）", s))
+            }
 
         case "reset":
             // 双击 / 右键她 = 复位（跑回初始位置）。

@@ -289,11 +289,18 @@ def main():
             return 0
 
         # —— 三重防护之二：安装前备份 ——
+        # ⚠️ 只备份文件，跳过子目录：2026-09-23 因为 assets/pet/ 下误放了一个
+        # 源文件目录，copy2 遇到目录直接抛 PermissionError，整个安装中断。
+        # 备份目录里也没必要装源文件（几十 MB）。
         stamp = time.strftime("%Y%m%d-%H%M%S")
         bdir = os.path.join(BACKUP, stamp)
         os.makedirs(bdir, exist_ok=True)
         for f in os.listdir(PETDIR):
-            shutil.copy2(os.path.join(PETDIR, f), os.path.join(bdir, f))
+            src = os.path.join(PETDIR, f)
+            if not os.path.isfile(src):
+                print(f"  跳过非文件：{f}")
+                continue
+            shutil.copy2(src, os.path.join(bdir, f))
         print(f"\n--- 安装（已备份到 assets/.backup/{stamp}/）---")
 
         for f in installable:

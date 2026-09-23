@@ -72,12 +72,12 @@ window.PET_MANIFEST = {
     },
     "run": {
       "file": "run.png",
-      "frameCount": 8,
+      "frameCount": 12,
       "rows": 2,
-      "fps": 11,
+      "fps": 16,
       "loop": true,
       "loopStart": 1,
-      "loopEnd": 8,
+      "loopEnd": 12,
       "flipForLeft": true
     },
     "success": {

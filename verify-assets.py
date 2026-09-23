@@ -31,7 +31,7 @@ except ImportError:
 
 # 各剪辑的离地帧（1 基）。不在表里的 = 全程接地。
 AIRBORNE = {
-    'run':     [4, 8],                  # 8 帧双步循环：4 拍/步，两次腾空正好相隔 4 帧
+    'run':     [5, 6, 11, 12],          # 12 帧双步循环：每步 6 拍，腾空占 2 帧（顶点+下落）
     'jump':    [5, 6, 7, 8, 9],         # 上升 / 顶点 / 下落
     'drag':    list(range(2, 13)),      # 起吊后全程悬空
     'success': [4, 5, 6, 7, 8],         # 跳起
@@ -354,13 +354,20 @@ def main():
                     f"{clip}: 腿几乎没有前后摆动（{poses} 个姿态、最大摆幅 {maxcols} 列）"
                     f" → 运行时是「上下弹着平移」而不是跑，见 docs/run-返工说明.md")
 
-            # 两次腾空必须等间隔 —— 不然一条腿的步时比另一条长，细看会"跛"
+            # 两次腾空必须等间隔 —— 不然一条腿的步时比另一条长，细看会"跛"。
+            # 一次腾空常占 2 帧（顶点 + 下落），所以先把连续的并成一组再比组间隔。
             air_idx = [mm["idx"] for mm in metrics if mm and mm["feet"] < base - 8]
-            if len(air_idx) == 2:
-                gap1 = air_idx[1] - air_idx[0]
-                gap2 = n - air_idx[1] + air_idx[0]
-                report.append(f"           腾空间隔 {gap1} / {gap2} 帧"
-                              f"（两步循环应相等，各 {n // 2}）")
+            groups = []
+            for k in air_idx:
+                if groups and k - groups[-1][-1] == 1:
+                    groups[-1].append(k)
+                else:
+                    groups.append([k])
+            if len(groups) == 2:
+                gap1 = groups[1][0] - groups[0][0]
+                gap2 = n - groups[1][0] + groups[0][0]
+                report.append(f"           腾空 {len(air_idx)} 帧（分 {len(groups)} 次）"
+                              f"，间隔 {gap1} / {gap2} 帧（两步循环应相等，各 {n // 2}）")
                 if abs(gap1 - gap2) > 1:
                     warns.append(
                         f"{clip}: 两次腾空间隔不等（{gap1} / {gap2} 帧）"

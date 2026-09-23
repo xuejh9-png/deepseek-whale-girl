@@ -35,25 +35,40 @@ CELL_W, CELL_H, COLS = 320, 400, 6
 
 
 def keyout(path):
-    """清掉与画面边缘连通的近似白/浅灰背景 → 透明。"""
+    """清掉与画面边缘连通的近似白/浅灰背景 → 透明。
+
+    ⚠️ 2026-09-23 返工：上一版是"每行取最左/最右的非背景像素之间全保留"，
+    结果**每帧右边/下面都残留一块背景矩形**（用户截图里那个"白色方块"）。
+    根因：角色有分开的部位（飘起的头发、抬起的腿），那一行的最左最右之间
+    夹着大片背景，被整块保下来了。
+
+    正确做法是**从画面边缘往内做连通域灌注**：
+      · 她本人的白（裙子/围裙/头饰/鞋子）和背景同色，**阈值化会一起吃掉**
+      · 但她的白被轮廓包着，**灌注进不去** —— "与边缘连通"这一个条件就分开了
+    """
     im = Image.open(path).convert("RGBA")
     a = np.array(im).astype(int)
-    R, G, B = a[:, :, 0], a[:, :, 1], a[:, :, 2]
-    mx = np.maximum(np.maximum(R, G), B)
-    mn = np.minimum(np.minimum(R, G), B)
-    bgish = (mn >= 222) & ((mx - mn) <= 12)
-    fg = ~bgish
-    h, w = bgish.shape
-    keep = np.zeros((h, w), bool)
-    for y in range(h):
-        idx = np.where(fg[y])[0]
-        if len(idx):
-            keep[y, idx.min():idx.max()+1] = True
-    for x in range(w):
-        idx = np.where(keep[:, x])[0]
-        if len(idx):
-            keep[idx.min():idx.max()+1, x] = True
-    alpha = np.where(keep, 255, 0).astype(np.uint8)
+    mn = a[:, :, :3].min(axis=2)
+    mx = a[:, :, :3].max(axis=2)
+    bright = (mn >= 235) & ((mx - mn) <= 10)
+
+    seed = np.zeros_like(bright)
+    seed[0, :] = bright[0, :]
+    seed[-1, :] = bright[-1, :]
+    seed[:, 0] = bright[:, 0]
+    seed[:, -1] = bright[:, -1]
+    while True:
+        g = seed.copy()
+        g[1:, :] |= seed[:-1, :]
+        g[:-1, :] |= seed[1:, :]
+        g[:, 1:] |= seed[:, :-1]
+        g[:, :-1] |= seed[:, 1:]
+        g &= bright
+        if np.array_equal(g, seed):
+            break
+        seed = g
+
+    alpha = np.where(seed, 0, 255).astype(np.uint8)
     return Image.fromarray(np.dstack([a[:, :, :3].astype(np.uint8), alpha]), "RGBA")
 
 
@@ -69,7 +84,8 @@ def main():
     ap.add_argument("--src", required=True, help="姿势图目录")
     ap.add_argument("--out", required=True, help="输出的精灵图路径")
     ap.add_argument("--frames", type=int, help="帧数（默认=目录里的 png 数量）")
-    ap.add_argument("--air", default="", help="腾空帧号，逗号分隔，如 4,8")
+    ap.add_argument("--air", default="",
+                    help="腾空帧号，如 5,11；也可以逐帧指定抬高量：5:40,6:20,11:40,12:20")
     ap.add_argument("--lift", type=int, default=40, help="腾空帧整体抬高多少 px")
     ap.add_argument("--ground", type=int, default=358, help="接地线 y（脚底落在这里）")
     ap.add_argument("--center", type=int, default=160, help="水平中心 x")
@@ -109,7 +125,19 @@ def main():
 
     rows = (n + COLS - 1) // COLS
     sheet = Image.new("RGBA", (CELL_W*COLS, CELL_H*rows), (0, 0, 0, 0))
-    air = {int(x) for x in args.air.split(",") if x.strip()}
+    # 腾空帧 → 抬高量。支持 "5:40,6:20" 这种逐帧指定：
+    # 一次腾空常常占两帧（顶点 + 下落），两帧用同一个抬高量会让落地前"悬住"，
+    # 下落那帧应该只抬一半左右，形成下落弧线。
+    air = {}
+    for tok in args.air.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if ":" in tok:
+            k, v = tok.split(":")
+            air[int(k)] = int(v)
+        else:
+            air[int(tok)] = args.lift
 
     print()
     print("=== 3/3 贴进精灵图 ===")
@@ -119,14 +147,14 @@ def main():
         nw = max(1, int(round(im.width*K)))
         nh = max(1, int(round(im.height*K)))
         t = im.resize((nw, nh), Image.LANCZOS)
-        bottom = args.ground - (args.lift if idx in air else 0)
+        bottom = args.ground - air.get(idx, 0)
         left = args.center - nw//2
         top = bottom - nh
         r, c = divmod(i, COLS)
         sheet.alpha_composite(t, (c*CELL_W + left, r*CELL_H + top))
         print("  #%-3d %-11s %-16s %s" % (idx, "%dx%d" % (nw, nh),
               "x=%d y=%d" % (left, top),
-              "腾空（抬高 %dpx）" % args.lift if idx in air else "接地"))
+              "腾空（抬高 %dpx）" % air[idx] if idx in air else "接地"))
 
     sheet.save(args.out)
     print()

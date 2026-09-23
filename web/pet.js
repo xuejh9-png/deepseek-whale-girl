@@ -115,7 +115,18 @@
 
   function startPolling() {
     if (timer) return;
-    poll();
+    /* 把「一个跑步动画周期多长」告诉宿主 —— 只报一次。
+     为什么必须由网页报：manifest 只有这一侧知道，宿主拿不到。
+     宿主需要它才能把"位移时长"对齐到整数个迈步周期；
+     之前宿主里把这个值写死成 12帧/16fps，换素材后就对不上了。 */
+  (function reportRunCycle() {
+    var c = (window.PET_MANIFEST && window.PET_MANIFEST.clips || {}).run;
+    if (c && c.fps && c.frameCount) {
+      tell('runCycle', { seconds: c.frameCount / c.fps });
+    }
+  })();
+
+  poll();
     timer = setInterval(poll, POLL_MS);
   }
 
