@@ -31,13 +31,18 @@ except ImportError:
 
 # 各剪辑的离地帧（1 基）。不在表里的 = 全程接地。
 AIRBORNE = {
-    'run':     [4, 10],                 # Airborne 相位：12 帧双步循环，间隔各 6 帧
+    'run':     [4, 8],                  # 8 帧双步循环：4 拍/步，两次腾空正好相隔 4 帧
     'jump':    [5, 6, 7, 8, 9],         # 上升 / 顶点 / 下落
     'drag':    list(range(2, 13)),      # 起吊后全程悬空
     'success': [4, 5, 6, 7, 8],         # 跳起
 }
 
 SQUASH_CLIPS = {'jump', 'success'}      # 允许变矮（下蹲 / 落地压缩）
+
+# 跑步的身高**本来就该变**（压低帧矮、伸展帧高）。
+# 原来的 TOL_HEIGHT=14 是在"没有压低"的旧素材上标定的 ——
+# 那条规则反而会惩罚正确的动画，所以给位移类剪辑单独放宽。
+TOL_HEIGHT_LOCO = 45
 
 TOL_FEET_REL = 8        # 接地帧相对全套中位数的容差
 TOL_FEET_ABS = 5        # 中位数离地面线超过这个值 → WARN
@@ -52,12 +57,15 @@ MIN_CHANGED_PX = 20     # 一帧里至少这么多像素变了，才算"姿态�
 MIN_VISIBLE_PX = 40     # 实际显示尺寸下，循环段单帧变化不得低于此值（否则肉眼读成静止）
 
 # 位移/跑步类剪辑的「步幅」判据（2026-09-23 补，见 docs/run-返工说明.md）
-LEG_TOP = 245           # 腿部起始高度（画布坐标）
-# 为什么是 8：run 是 12 帧 @16fps、一循环 2 步（腾空 2 次）→ 一步 6 帧。
-# 一步至少要 4 个关键姿态（触地 / 压低 / 过渡 / 腾空），两步 = 8 个。
-# 步频由此正好 160 步/分，落在真人跑步的 160~180 区间 —— 帧数是对的，
-# 缺的是关键姿态本身（实测只有 4 个，且两组几乎相同）。
-STRIDE_MIN_POSES = 8
+LEG_TOP = 270           # 腿部区域上界（取裙摆以下，避免被静止的裙摆稀释）
+LEG_BOT = 365
+# ⚠️ 为什么是 4 而不是"每帧一个"（2026-09-23 修正）：
+# 侧面视角 + 两条腿长得一样时，「右脚在前」和「左脚在前」的**轮廓完全相同**
+#（遮掉的还是那条腿）。所以一个跑步循环里**可区分的腿部形状最多 4 个**：
+#   触地 / 压低 / 过渡 / 腾空
+# 两步循环里这 4 个形状各出现两次。所以约束"姿态数"没有意义 ——
+# 真正决定像不像跑的是**摆幅**（腿真的在前后动）和**身高起落**（有压低）。
+STRIDE_MIN_POSES = 4
 STRIDE_MIN_COLS = 60    # 任意两帧腿部轮廓至少要差这么多列
 
 # 「整只被横向压窄」判据（2026-09-23 补）
@@ -132,46 +140,47 @@ def display_changes(path, fw, fh, cols, ls, le):
     return out
 
 
-def stride_profile(path, fw, fh, cols, n, leg_top=LEG_TOP):
+def stride_profile(path, fw, fh, cols, n, leg_top=LEG_TOP, leg_bot=LEG_BOT):
     """量「腿有没有真的前后摆」—— 位移/跑步类剪辑的核心判据。
 
     ⚠️ 为什么必须单独量一遍（2026-09-23 补）：
     用户反馈 run「看起来像平移过去，不生动」，但脚本原有判据**全绿** ——
     因为"整帧有没有变"是 12/12（头发、披风一直在动），
-    而真正决定"像不像在跑"的是**腿部轮廓的水平走向**有没有变。
+    而真正决定"像不像在跑"的是**腿部**在不在动。
 
-    实测 run：12 帧里只有 4 个水平姿态、任意两帧最多差 22 列（画布宽 320）。
-    腿部像素总量确实每帧在变（3000~7000px），但那些变化全在**竖直方向**
-    （跟着身体上下弹跳），前后交替几乎为零。
-    → 合起来就是"站着不动 + 身体弹 2 次"，运行时配上窗口横移 = "颠着平移"。
+    ⚠️ 用什么描述腿部（2026-09-23 改）：一开始用"每列有没有腿像素"，
+    **描述力不够** —— 「左腿前」和「右腿前」的列分布是一样的，
+    它只能看出"腿张开多宽"，看不出"腿怎么摆"。
+    改成取腿部区域的**二值掩码**（缩到 64×24）两两算 IoU，能区分真实腿型。
 
-    返回 (姿态数, 任意两帧的最大列差)。
+    返回 (可区分的腿型数, 任意两帧的最大轮廓列差)。
     """
     im = Image.open(path).convert("RGBA")
-    A = np.array(im.split()[-1]).astype(int)
-    sigs = []
+    A = np.array(im.split()[-1]) > 128
+    masks, sigs = [], []
     for i in range(n):
         r, c = divmod(i, cols)
-        m = A[r*fh:(r+1)*fh, c*fw:(c+1)*fw] > ALPHA_TH
-        band = np.zeros(m.shape, bool)
-        band[leg_top:] = True
-        band &= m
-        sigs.append(band.any(axis=0))       # 每列有没有腿像素 = 水平轮廓
+        band = A[r*fh+leg_top:r*fh+leg_bot, c*fw:(c+1)*fw]
+        sigs.append(band.any(axis=0))
+        mi = Image.fromarray((band*255).astype(np.uint8)).resize((64, 24), Image.LANCZOS)
+        masks.append(np.array(mi) > 100)
 
-    used, poses = set(), 0
+    reps = []
     for i in range(n):
-        if i in used:
-            continue
-        poses += 1
-        used.add(i)
-        for j in range(i + 1, n):
-            if j not in used and int((sigs[i] != sigs[j]).sum()) < 8:
-                used.add(j)
+        dup = False
+        for r in reps:
+            inter = (masks[i] & masks[r]).sum()
+            uni = (masks[i] | masks[r]).sum()
+            if uni and inter/float(uni) >= 0.80:
+                dup = True
+                break
+        if not dup:
+            reps.append(i)
     maxcols = 0
     for i in range(n):
         for j in range(i + 1, n):
             maxcols = max(maxcols, int((sigs[i] != sigs[j]).sum()))
-    return poses, maxcols
+    return len(reps), maxcols
 
 
 def main():
@@ -281,7 +290,12 @@ def main():
                                  f" 达 {mm['feet']-base:+d}px（会与其它帧/剪辑肉眼可见地跳）")
             if abs(mm["cx"] - GX) > TOL_CENTER:
                 fails.append(f"{clip}#{mm['idx']}: 水平中心偏 {mm['cx']-GX:+.0f}")
-            tol = TOL_HEIGHT_SQUASH if squash else TOL_HEIGHT
+            if squash:
+                tol = TOL_HEIGHT_SQUASH
+            elif m.get("flipForLeft"):
+                tol = TOL_HEIGHT_LOCO      # 跑步的身高本来就该随拍子变
+            else:
+                tol = TOL_HEIGHT
             if abs(mm["h"] - CH) > tol:
                 warns.append(f"{clip}#{mm['idx']}: 角色高 {mm['h']}（期望 {CH}±{tol}）")
             if mm["w"] > WIDTH_MAX:
@@ -353,16 +367,20 @@ def main():
                         f" → 步时 {gap1/float(m['fps']):.2f}s vs {gap2/float(m['fps']):.2f}s，"
                         f"细看会「跛」")
 
-            # 接地帧脚底要有起落 —— 否则缺少"压低/蹬地"那一拍
-            gnd = [mm["feet"] for mm in metrics if mm and mm["feet"] >= base - 8]
-            if gnd:
-                spread = max(gnd) - min(gnd)
-                report.append(f"           接地脚底起落 {spread} px（期望 2~6；"
-                              f"0~1 = 全程一样高，等于没蹬地也没缓冲）")
-                if spread <= 1:
+            # 身高要有起落 —— 跑步的"压低/伸展"就体现在这里。
+            # ⚠️ 之前这条写的是"接地帧脚底起落"，**判据写错了**：
+            # 压低时脚不离地、是**身体**下降，不是脚底往下走。
+            # 正确的观测量是角色身高（包围盒高）的跨度。
+            hs2 = [mm["h"] for mm in metrics if mm]
+            if hs2:
+                hspread = max(hs2) - min(hs2)
+                pct = hspread / float(max(1, int(np.median(hs2)))) * 100
+                report.append(f"           身高起落 {hspread} px（{pct:.0f}%；"
+                              f"0~5% = 全程一样高，等于没有压低/伸展）")
+                if pct < 6:
                     warns.append(
-                        f"{clip}: 接地帧脚底几乎钉在同一高度（起落 {spread}px）"
-                        f" → 没有「压低」那一拍，跑起来缺重量感")
+                        f"{clip}: 角色身高几乎不变（起落 {hspread}px / {pct:.0f}%）"
+                        f" → 缺少「压低」那一拍，跑起来没有重量感")
 
         # 横向缩放：头段宽/角色高 只该随视角变，不该随帧号变
         if hr_base:
