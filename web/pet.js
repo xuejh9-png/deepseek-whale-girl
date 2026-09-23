@@ -109,14 +109,8 @@
   function poll() {
     fetch(API + '/state', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (s) {
-        var a = (s || {}).agent || {};
-        anim.setState(effectiveState(a.state));
-        // 顺带把状态推给宿主，右键菜单里就能显示"她此刻在干什么"
-        tell('state', { state: a.state, label: a.label, task: a.task,
-                        source: (s || {}).source });
-      })
-      .catch(function () { anim.setState(effectiveState('offline')); tell('state', { state: 'offline' }); });
+      .then(function (s) { anim.setState(effectiveState(((s || {}).agent || {}).state)); })
+      .catch(function () { anim.setState(effectiveState('offline')); });
   }
 
   function startPolling() {
@@ -145,13 +139,14 @@
   }
 
   body.addEventListener('pointerdown', function (e) {
-    // 右键：**不依赖 contextmenu** —— 实测在 WKWebView 里这个 DOM 事件不触发
+    // 右键 = 复位（跑回初始位置）。
+    // **不依赖 contextmenu** —— 实测它在 WKWebView 里不触发
     //（日志证据：用户的点击有一堆 dragBegin/clicked，menu 一次都没有）。
     // pointerdown 的 button===2 是可靠的信号。
     if (e.button === 2) {
       if (!IS_DESKTOP) return;
       e.preventDefault();
-      tell('menu');
+      tell('reset');
       return;
     }
     if (e.button !== 0) return;
@@ -194,15 +189,15 @@
     setTilt(0);
     tell('dragEnd');
 
-    // 双击 = 打开菜单。
+    // 双击 = 复位（跑回初始位置）。
     // 为什么值得单独加一条：`clicked` 是**实测最可靠**的信号（日志里一堆），
     // 而右键那条路（contextmenu）在 WKWebView 里根本不触发。
-    // 所以"双击"是他一定点得出来的入口。
+    // 用户要求"跑动不要出现在菜单里"，所以这里是**直接手势**，不弹菜单。
     var now2 = Date.now();
     var isDbl = IS_DESKTOP && !drag.moved && (now2 - lastClickAt) < 400;
     lastClickAt = now2;
     if (isDbl) {
-      tell('menu');
+      tell('reset');
       return;
     }
 
@@ -239,8 +234,9 @@
     tell('menu');
   });
 
-  /* 长按 800ms 唤出原生菜单（置顶 / 退出）—— 不需要可见按钮，
-     也不像右键那样要求用户先知道"可以右键"。
+  /* 长按 800ms 唤出原生菜单（现在菜单里只剩「退出桌面宠物」）。
+     为什么留着：无边框窗口没有关闭按钮，双击/右键已经改成"复位"了，
+     所以需要一个**不用记快捷键**的退出口。
      注意：**不要在 pointermove 时清计时器** —— 按住时手指/鼠标抖 1px
      就会触发 pointermove，长按会永远按不出来。
      改成让计时器自己检查 drag.moved：真拖动了就不弹菜单。 */

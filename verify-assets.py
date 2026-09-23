@@ -51,6 +51,11 @@ CHANGE_PX_TH = 8        # 单像素变化超过这个值算"这一像素变了"
 MIN_CHANGED_PX = 20     # 一帧里至少这么多像素变了，才算"姿态不同"
 MIN_VISIBLE_PX = 40     # 实际显示尺寸下，循环段单帧变化不得低于此值（否则肉眼读成静止）
 
+# 位移/跑步类剪辑的「步幅」判据（2026-09-23 补，见 docs/run-返工说明.md）
+LEG_TOP = 245           # 腿部起始高度（画布坐标）
+STRIDE_MIN_POSES = 6    # 循环里至少要有的腿部（水平）姿态数
+STRIDE_MIN_COLS = 60    # 任意两帧腿部轮廓至少要差这么多列
+
 
 def load(path, fw, fh, cols, n):
     im = Image.open(path).convert("RGBA")
@@ -114,6 +119,48 @@ def display_changes(path, fw, fh, cols, ls, le):
         a, b = cell(i - 1), cell(i)
         out.append(int((np.abs(a - b).max(axis=2) > CHANGE_PX_TH).sum()))
     return out
+
+
+def stride_profile(path, fw, fh, cols, n, leg_top=LEG_TOP):
+    """量「腿有没有真的前后摆」—— 位移/跑步类剪辑的核心判据。
+
+    ⚠️ 为什么必须单独量一遍（2026-09-23 补）：
+    用户反馈 run「看起来像平移过去，不生动」，但脚本原有判据**全绿** ——
+    因为"整帧有没有变"是 12/12（头发、披风一直在动），
+    而真正决定"像不像在跑"的是**腿部轮廓的水平走向**有没有变。
+
+    实测 run：12 帧里只有 4 个水平姿态、任意两帧最多差 22 列（画布宽 320）。
+    腿部像素总量确实每帧在变（3000~7000px），但那些变化全在**竖直方向**
+    （跟着身体上下弹跳），前后交替几乎为零。
+    → 合起来就是"站着不动 + 身体弹 2 次"，运行时配上窗口横移 = "颠着平移"。
+
+    返回 (姿态数, 任意两帧的最大列差)。
+    """
+    im = Image.open(path).convert("RGBA")
+    A = np.array(im.split()[-1]).astype(int)
+    sigs = []
+    for i in range(n):
+        r, c = divmod(i, cols)
+        m = A[r*fh:(r+1)*fh, c*fw:(c+1)*fw] > ALPHA_TH
+        band = np.zeros(m.shape, bool)
+        band[leg_top:] = True
+        band &= m
+        sigs.append(band.any(axis=0))       # 每列有没有腿像素 = 水平轮廓
+
+    used, poses = set(), 0
+    for i in range(n):
+        if i in used:
+            continue
+        poses += 1
+        used.add(i)
+        for j in range(i + 1, n):
+            if j not in used and int((sigs[i] != sigs[j]).sum()) < 8:
+                used.add(j)
+    maxcols = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            maxcols = max(maxcols, int((sigs[i] != sigs[j]).sum()))
+    return poses, maxcols
 
 
 def main():
@@ -257,6 +304,16 @@ def main():
                       f"{'离地: ' + ' '.join(airs) if airs else '全程接地'}")
         if note:
             report.append(f"           {note}")
+
+        # 位移类剪辑（manifest 里标了 flipForLeft 的）额外量步幅
+        if m.get("flipForLeft"):
+            poses, maxcols = stride_profile(os.path.join(root, m["file"]), FW, FH, COLS, n)
+            report.append(f"           腿部位移 {poses} 个姿态 / 最大摆幅 {maxcols} 列"
+                          f"（期望 ≥{STRIDE_MIN_POSES} 个、≥{STRIDE_MIN_COLS} 列）")
+            if poses < STRIDE_MIN_POSES or maxcols < STRIDE_MIN_COLS:
+                warns.append(
+                    f"{clip}: 腿几乎没有前后摆动（{poses} 个姿态、最大摆幅 {maxcols} 列）"
+                    f" → 运行时是「上下弹着平移」而不是跑，见 docs/run-返工说明.md")
 
     # ---------- 输出 ----------
     if not args.quiet:

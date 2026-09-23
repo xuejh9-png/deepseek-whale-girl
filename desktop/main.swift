@@ -59,24 +59,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var dragging = false
     var dragStartMouse = NSPoint.zero
     var dragStartWin = NSPoint.zero
-    var pinned = true
     var moveMonitor: Any?
     var passTimer: Timer?
     var hotKeyRefs: [EventHotKeyRef?] = []
     var hotKeyHandler: EventHandlerRef?
     var hotKeyActions: [UInt32: () -> Void] = [:]
 
-    // 跑动（「回到初始位置」时用 run 剪辑）
+    // 跑动（复位 / ⌥⌘H 时用 run 剪辑）
     var runTimer: Timer?
     var runFrom = NSPoint.zero
     var runTo = NSPoint.zero
     var runT0 = Date()
     var runDur: TimeInterval = 0
-
-    // 网页推上来的当前状态，右键菜单里显示
-    var lastState: String?
-    var lastLabel: String?
-    var lastTask: String?
 
     // 窗口 = 素材画布的实际显示尺寸（320×400 画布 @ 0.5 缩放）。
     // 角色本体占画布高度 64%，对应屏幕高度 128 CSS px。
@@ -373,14 +367,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return clampOrigin(NSPoint(x: home.x + 120, y: home.y))
     }
 
+    /// 跑动速度：**按整个动画周期对齐**，不要停在迈步中间。
+    ///
+    /// run 是 12 帧 @16fps → 一个完整跑步周期 0.75 秒。
+    /// 如果时长不是周期的整数倍，她会在"迈到一半"的位置停住 ——
+    /// 看起来就是滑过去而不是跑过去。
+    /// 反过来，每一周期的位移（步幅）也要在合理范围内：
+    /// 角色显示宽约 100px，一个周期走 ~180px（≈1.8 个身宽）比较像真在跑；
+    /// 走太远会变成"腿在原地倒、人在飘"。
+    func runDuration(for dx: CGFloat) -> TimeInterval {
+        let cycle = 12.0 / 16.0                 // 秒/周期，跟随 manifest 的帧数与 fps
+        let stridePerCycle: CGFloat = 180       // 每个动画周期的目标位移
+        let cycles = max(1.0, (abs(dx) / stridePerCycle).rounded())
+        return min(6.0, max(cycle, cycles * cycle))
+    }
+
     /// continuing=true 表示"上一段还没停" —— 只翻方向、不重启剪辑，
     /// 否则折返处会看到她重新起跑一次（有明显顿挫）。
     func startRun(dx: CGFloat, target: NSPoint, continuing: Bool = false,
                   then: (() -> Void)? = nil) {
-        let speed: CGFloat = 260                      // px/s
         runFrom = window.frame.origin
         runTo = target
-        runDur = min(2.6, max(0.40, Double(abs(dx) / speed)))
+        runDur = runDuration(for: dx)
         runT0 = Date()
 
         let dir: Int = dx < 0 ? -1 : 1
@@ -389,7 +397,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             sendToPage("runStart", ["dir": dir, "durationMs": Int(runDur * 1000)])
         }
-        petLog("跑动\(continuing ? "折返" : "开始") dir=\(dir) dx=\(Int(dx)) 用时\(String(format: "%.2f", runDur))s")
+        let speed = abs(dx) / CGFloat(max(0.01, runDur))
+        petLog(String(format: "跑动%@ dir=%d dx=%d 用时%.2fs（%.0f px/s，%.1f 个跑步周期）",
+                      continuing ? "折返" : "开始", dir, Int(dx), runDur,
+                      speed, runDur / (12.0 / 16.0)))
 
         runTimer?.invalidate()
         runTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] t in
@@ -607,7 +618,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: 处理网页指令
 
     func handle(cmd: String, body: [String: Any]) {
-        if cmd != "dragMove" { petLog("收到网页指令：\(cmd)") }
+        // 高频/心跳类指令不写日志 —— 否则每 2.5 秒一条，几分钟就把日志淹了，
+        // 真出问题时反而找不到那一条。
+        if cmd != "dragMove" && cmd != "state" { petLog("收到网页指令：\(cmd)") }
         switch cmd {
         case "dragBegin":
             dragging = true
@@ -626,11 +639,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             saveOrigin()                      // 记住这次放的位置
             updatePassthrough()
 
-        case "state":
-            // 网页每次轮询都会推上来，供右键菜单显示
-            lastState = body["state"] as? String
-            lastLabel = body["label"] as? String
-            lastTask = body["task"] as? String
+        case "reset":
+            // 双击 / 右键她 = 复位（跑回初始位置）。
+            // 用户要求"跑动不要出现在菜单里"，所以改成直接手势触发。
+            dragging = false
+            runHome()
 
         case "menu":
             dragging = false
@@ -648,58 +661,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 状态 → 中文（网页没给 label 时的兜底）
-    func stateText() -> String {
-        let map = ["idle": "空闲", "thinking": "思考中", "working": "执行中",
-                   "success": "完成", "error": "出错", "waiting": "等待",
-                   "sleeping": "睡眠", "offline": "离线（独立模式）"]
-        if let l = lastLabel, !l.isEmpty { return l }
-        if let s = lastState { return map[s] ?? s }
-        return "—"
-    }
-
     // MARK: 右键菜单
     //
-    // 无边框窗口没有关闭按钮，退出走这里；
-    // 第一行是只读的"她此刻在干什么"—— 这个工具的用途就是让人一眼知道 AI 的状态，
-    // 菜单是唯一不用遮挡桌面的查看位置。
+    // ⚠️ 用户明确要求**只留「退出桌面宠物」**：
+    //   · 删掉「当前：…」—— 看不太懂，不如不给
+    //   · 删掉「跑一下」—— 放在菜单里"看起来很呆"
+    //   · 删掉「置顶显示」—— 她就该一直置顶，不需要开关
+    // 跑动/复位改由**直接手势**触发（双击 / 右键），不经菜单：
+    // 见 handle(cmd: "reset")。菜单只留退出，作为"关掉她"的鼠标兜底。
 
     func showMenu() {
         let menu = NSMenu()
-
-        var line = "当前：\(stateText())"
-        if let t = lastTask, !t.isEmpty {
-            let one = t.replacingOccurrences(of: "\n", with: " ")
-            line += " · " + (one.count > 18 ? String(one.prefix(18)) + "…" : one)
-        }
-        let info = NSMenuItem(title: line, action: nil, keyEquivalent: "")
-        info.isEnabled = false
-        menu.addItem(info)
-        menu.addItem(NSMenuItem.separator())
-
-        let home = NSMenuItem(title: "跑一下（她会跑给你看）",
-                              action: #selector(goHomeOrLap), keyEquivalent: "h")
-        home.keyEquivalentModifierMask = [.option, .command]   // 菜单里显示 ⌥⌘H
-        home.target = self
-        menu.addItem(home)
-
-        let pin = NSMenuItem(title: pinned ? "取消置顶" : "置顶显示",
-                             action: #selector(togglePin), keyEquivalent: "")
-        pin.target = self
-        menu.addItem(pin)
-        menu.addItem(NSMenuItem.separator())
-
         let quit = NSMenuItem(title: "退出桌面宠物",
                               action: #selector(quitApp), keyEquivalent: "q")
         quit.keyEquivalentModifierMask = [.option, .command]   // 菜单里显示 ⌥⌘Q
         quit.target = self
         menu.addItem(quit)
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
-    }
-
-    @objc func togglePin() {
-        pinned.toggle()
-        window.level = pinned ? .floating : .normal
     }
 
     @objc func quitApp() {

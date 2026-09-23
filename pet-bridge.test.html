@@ -64,9 +64,11 @@ window.fetch = function () { return Promise.reject(new Error('offline')); };
     // ---- 桥本身 ----
     ok('window.petHostEvent 已导出（宿主靠它驱动网页）',
        typeof window.petHostEvent === 'function', typeof window.petHostEvent);
-    ok('页面能把指令发给宿主（假宿主收到了消息）', cmds().length > 0, cmds().join(','));
-    ok('轮询时会把状态推给宿主（菜单要显示她此刻在干什么）',
-       window.__sent.some(function (m) { return m.cmd === 'state'; }), cmds().join(','));
+    // 真正证明"网页 → 宿主"这条通道通着：点她一下，宿主应当收到 clicked
+    clear();
+    click();
+    ok('页面能把指令发给宿主（点一下 → 宿主收到 clicked）',
+       lastCmd() === 'clicked', cmds().join(','));
     ok('真实清单里有 run 剪辑（否则跑步会被静默跳过）',
        !!(window.PET_MANIFEST.clips.run), Object.keys(window.PET_MANIFEST.clips).join(','));
     ok('run 声明了 flipForLeft', !!window.PET_MANIFEST.clips.run.flipForLeft,
@@ -92,13 +94,15 @@ window.fetch = function () { return Promise.reject(new Error('offline')); };
     } catch (e) { survived = false; }
     ok('参数缺失或未知事件不抛异常', survived, survived ? '' : 'threw');
 
-    // ---- 网页 → 宿主：右键 ----
-    // 回归：contextmenu 在 WKWebView 里**不触发**（日志证据：用户的点击一堆，
-    // menu 一次都没有），所以右键改由 pointerdown 的 button===2 触发。
+    // ---- 网页 → 宿主：右键 / 双击 = 复位（不弹菜单）----
+    // 回归①：contextmenu 在 WKWebView 里**不触发**（日志证据：用户的点击一堆，
+    //        menu 一次都没有），所以右键改由 pointerdown 的 button===2 触发。
+    // 回归②：用户要求"跑动不要出现在菜单里"→ 双击/右键都应该是**直接复位**，
+    //        而不是去开菜单。
     clear();
     ptr('pointerdown', 40, 40, 2);
-    ok('右键（button=2）发出 menu 指令 —— 不依赖 contextmenu',
-       lastCmd() === 'menu', cmds().join(','));
+    ok('右键发出 reset 指令（复位，不是开菜单）', lastCmd() === 'reset', cmds().join(','));
+    ok('右键不应弹菜单', cmds().indexOf('menu') === -1, cmds().join(','));
     ok('右键不应被当成拖拽', cmds().indexOf('dragBegin') === -1, cmds().join(','));
 
     // ---- 网页 → 宿主：单击 / 双击 / 拖拽 ----
@@ -109,8 +113,9 @@ window.fetch = function () { return Promise.reject(new Error('offline')); };
 
       clear();
       click();                                    // 双击的第一下
-      click();                                    // 第二下 → 应该是菜单
-      ok('双击发出 menu 指令', lastCmd() === 'menu', cmds().join(','));
+      click();                                    // 第二下 → 复位
+      ok('双击发出 reset 指令（复位）', lastCmd() === 'reset', cmds().join(','));
+      ok('双击不弹菜单', cmds().indexOf('menu') === -1, cmds().join(','));
 
       clear();
       ptr('pointerdown', 40, 40);
