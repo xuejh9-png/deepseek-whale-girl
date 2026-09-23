@@ -28,14 +28,15 @@
   }
 
   var MAN = {
-    version: 4,
+    version: 5,
     spriteSheet: { frameWidth: 320, frameHeight: 400, columns: 6 },
     clips: {
       idle:  { file: PNG, frameCount: 20, rows: 4, fps: 10, loop: true,  loopStart: 1,  loopEnd: 20 },
       work:  { file: PNG, frameCount: 12, rows: 2, fps: 10, loop: true,  loopStart: 5,  loopEnd: 12 },
       sleep: { file: PNG, frameCount: 12, rows: 2, fps: 6,  loop: true,  loopStart: 9,  loopEnd: 12 },
       click: { file: PNG, frameCount: 8,  rows: 2, fps: 12, loop: false, loopStart: null, loopEnd: null },
-      jump:  { file: PNG, frameCount: 14, rows: 3, fps: 14, loop: false, loopStart: null, loopEnd: null, airborneFrame: 7 }
+      jump:  { file: PNG, frameCount: 14, rows: 3, fps: 14, loop: false, loopStart: null, loopEnd: null, airborneFrame: 7 },
+      drag:  { file: PNG, frameCount: 12, rows: 2, fps: 10, loop: true,  loopStart: 5,  loopEnd: 12 }
     }
   };
 
@@ -104,6 +105,32 @@
   var n0 = anim.clipName;
   anim.trigger('runLeft', true);
   ok('无素材的动作被跳过', anim.clipName === n0, anim.clipName);
+
+  // ---- 12. 抓取 → 松手 → 必须落地 ----
+  // 回归：drag 剪辑是无限循环的，松手时若不打断当前动作，
+  // 排队的 released 永远不会启动 → 角色一直吊在半空不落地（实际发生过的 bug）
+  anim.setState('idle');
+  anim.clearActions();
+  anim.trigger('grabbed', true);
+  ok('抓起后进入 drag 剪辑', anim.clipName === 'drag', anim.clipName);
+  tick(3000);
+  ok('drag 无限循环（action 一直占着）',
+     anim.action && anim.action.name === 'grabbed', anim.action && anim.action.name);
+
+  anim.trigger('released', true);          // 松手
+  ok('松手立刻打断并切到 jump', anim.clipName === 'jump', anim.clipName);
+  ok('released 从 airborneFrame 起播', anim.frame === 6, anim.frame);
+
+  tick(3000);                              // jump 播完
+  ok('落地后自动回到 idle',
+     anim.clipName === 'idle' && anim.action === null,
+     anim.clipName + '/' + (anim.action && anim.action.name));
+
+  // ---- 13. 缺素材的动作不能卡住队列 ----
+  anim.clearActions();
+  anim.trigger('runLeft', true);           // run 不在合成清单里
+  anim.trigger('clicked', true);           // 后续动作仍应能启动
+  ok('缺素材动作不阻塞后续动作', anim.clipName === 'click', anim.clipName);
 
   document.title = 'RESULT|PASS=' + P + '|FAIL=' + F + (out.length ? '|' + out.join('|') : '|ALL_OK');
 })();

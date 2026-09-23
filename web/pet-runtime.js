@@ -209,32 +209,46 @@
 
   /* ---------------- 动作队列 ---------------- */
 
+  // 逐个取出直到有一个能真正启动（缺素材的条目会被跳过，不能卡住队列）
   PetAnimation.prototype.nextInQueue = function () {
-    if (this.action || !this.queue.length) return;
-    var item = this.queue.shift();
-    this.startAction(item);
+    if (this.action) return;
+    while (this.queue.length) {
+      if (this.startAction(this.queue.shift())) return;
+    }
   };
 
+  // 返回是否真的启动了
   PetAnimation.prototype.startAction = function (item) {
     var clip = ACTION_CLIP[item.name];
-    if (!this.hasClip(clip)) return;       // 素材还没有 → 跳过，交回宿主
+    if (!this.hasClip(clip)) return false;   // 素材还没有 → 跳过，交回宿主
     this.action = item;
     var opts = null;
     if (item.name === 'released') {
       var af = this.manifest.clips[clip].airborneFrame;
       opts = { once: true, from: af || 1 };
     } else if (item.name === 'grabbed') {
-      opts = null;                          // 用剪辑自身的 intro+loop 结构
+      opts = null;                           // 用剪辑自身的 intro+loop 结构
     }
     this.playClip(clip, opts);
+    return true;
   };
 
-  // 瞬时动作：插到队首，优先于其它待播动作
+  /* 瞬时动作入口。
+     front=true 表示"打断当前动作立刻播" —— 这是必须的：
+     `drag` 剪辑是**无限循环**的，松手时如果不打断，
+     `this.action` 永远不为空，排队的 `released`（下落+落地）就永远不会启动，
+     角色会一直吊在半空。
+     实测症状：拖起来之后松手，她一直悬着不落地。 */
   PetAnimation.prototype.trigger = function (name, front) {
     var item = { name: name, t: Date.now() };
-    if (front) this.queue.unshift(item);
-    else this.queue.push(item);
-    if (!this.action) this.nextInQueue();
+    if (front) {
+      this.queue.unshift(item);
+      this.action = null;                    // 打断当前动作
+      this.nextInQueue();
+    } else {
+      this.queue.push(item);
+      if (!this.action) this.nextInQueue();
+    }
     return item;
   };
 

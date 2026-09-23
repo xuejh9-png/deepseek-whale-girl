@@ -158,13 +158,14 @@
     }
   });
 
-  // 指针离开窗口 / 被取消时也要收尾，否则会卡在 dragging
+  // 指针离开窗口 / 被系统手势打断时也要收尾，否则会卡在 drag 剪辑里不落地
   document.addEventListener('pointercancel', function () {
     if (!drag.on) return;
     drag.on = false;
     pet.classList.remove('dragging');
     setTilt(0);
     tell('dragEnd');
+    if (drag.moved) anim.trigger('released', true);   // 同样要播下落 + 落地
   });
 
   pet.addEventListener('contextmenu', function (e) {
