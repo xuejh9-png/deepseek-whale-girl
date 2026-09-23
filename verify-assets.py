@@ -340,6 +340,30 @@ def main():
                     f"{clip}: 腿几乎没有前后摆动（{poses} 个姿态、最大摆幅 {maxcols} 列）"
                     f" → 运行时是「上下弹着平移」而不是跑，见 docs/run-返工说明.md")
 
+            # 两次腾空必须等间隔 —— 不然一条腿的步时比另一条长，细看会"跛"
+            air_idx = [mm["idx"] for mm in metrics if mm and mm["feet"] < base - 8]
+            if len(air_idx) == 2:
+                gap1 = air_idx[1] - air_idx[0]
+                gap2 = n - air_idx[1] + air_idx[0]
+                report.append(f"           腾空间隔 {gap1} / {gap2} 帧"
+                              f"（两步循环应相等，各 {n // 2}）")
+                if abs(gap1 - gap2) > 1:
+                    warns.append(
+                        f"{clip}: 两次腾空间隔不等（{gap1} / {gap2} 帧）"
+                        f" → 步时 {gap1/float(m['fps']):.2f}s vs {gap2/float(m['fps']):.2f}s，"
+                        f"细看会「跛」")
+
+            # 接地帧脚底要有起落 —— 否则缺少"压低/蹬地"那一拍
+            gnd = [mm["feet"] for mm in metrics if mm and mm["feet"] >= base - 8]
+            if gnd:
+                spread = max(gnd) - min(gnd)
+                report.append(f"           接地脚底起落 {spread} px（期望 2~6；"
+                              f"0~1 = 全程一样高，等于没蹬地也没缓冲）")
+                if spread <= 1:
+                    warns.append(
+                        f"{clip}: 接地帧脚底几乎钉在同一高度（起落 {spread}px）"
+                        f" → 没有「压低」那一拍，跑起来缺重量感")
+
         # 横向缩放：头段宽/角色高 只该随视角变，不该随帧号变
         if hr_base:
             rs = [mm["hratio"] for mm in metrics if mm and mm["hratio"]]

@@ -4,8 +4,11 @@
 桌宠素材自动接收 —— 找新素材 → 合并验收 → 通过才安装。
 
 用法：
-    python3 intake-assets.py --dry-run    # 只找 + 验收，不动项目
-    python3 intake-assets.py              # 验收通过则安装
+    python3 intake-assets.py --dry-run        # 只找 + 验收，不动项目
+    python3 intake-assets.py                  # 验收通过则安装（只新增，不覆盖）
+    python3 intake-assets.py --accept run     # 明确声明"run 是返工升级，允许覆盖同名"
+
+素材放哪：**桌面 或 下载目录**（zip 包或散装 png 都行），脚本自己去找。
 
 ⚠️ 2026-09-22 的事故与修复（这个脚本的核心约束就来自它）
 --------------------------------------------------------------------
@@ -16,10 +19,12 @@
 根因是方法错，不是疏忽：**一个只会"发现差异就写入"的自动化，
 在项目比来源更新时必然造成降级覆盖。**
 
-现在的三重防护：
-  1. 逐文件分类 new / newer / same / **older** —— older 一律**跳过**并告警
-  2. 安装前把 assets/pet/ 整目录**备份**到 assets/.backup/<时间戳>/
-  3. 先在临时目录里验「合并后的全集」，**不通过绝不安装**
+现在的四重防护：
+  1. 逐文件分类 new / same / **differs** —— differs **默认跳过**并写通知
+  2. 要把 differs 装进去，必须**显式 --accept <剪辑名>**（等于人工确认"这是升级"）
+  3. **被 accept 的那一支在验收里不能有任何告警** ——
+     返工的目的就是把告警清掉；带着旧告警装进来等于白返工
+  4. 安装前把 assets/pet/ 整目录**备份**到 assets/.backup/<时间戳>/
 
 另外：manifest 是**合并**语义（保留已有剪辑，只增补新剪辑），
 素材是**移动**而非复制，并清理解压残留。
@@ -160,7 +165,11 @@ def merge_manifest(pm, dm):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--accept", default="",
+                    help="显式声明这几支是返工升级、允许覆盖同名文件（逗号分隔，填剪辑名，如 run）")
     args = ap.parse_args()
+
+    accept = {s.strip() for s in args.accept.split(",") if s.strip()}
 
     kind, path = find_delivery()
     if not kind:
@@ -185,11 +194,22 @@ def main():
         cls = classify(files, tmp)
         installable = [f for f, v in cls.items() if v == "new"]
         differs = [f for f, v in cls.items() if v == "differs"]
+
+        # --accept：把被显式指名的返工稿从 differs 提到 installable。
+        # 这一步是"人工确认"的机器表达 —— 只有人说了"这是升级"才允许覆盖同名文件。
+        accepted = [f for f in differs if os.path.splitext(f)[0] in accept]
+        if accepted:
+            installable += accepted
+            differs = [f for f in differs if f not in accepted]
+            print(f"  ACCEPT 人工声明为返工升级、允许覆盖：{', '.join(accepted)}")
+
         print("  逐文件判定: " + ", ".join(f"{f}={v}" for f, v in sorted(cls.items())))
         if differs:
             print(f"  ⚠ 以下文件项目里已存在且内容不同 → **不自动覆盖**，需人工确认："
                   f"{', '.join(differs)}")
             print("    （无法判断是'返工升级'还是'旧包降级'，交给你决定）")
+            print("     确认是返工升级就重跑：python3 intake-assets.py --accept "
+                  + ",".join(os.path.splitext(f)[0] for f in differs))
             notice = os.path.join(HOME, "Desktop", "桌宠素材-待人工确认.md")
             with open(notice, "w", encoding="utf-8") as fh:
                 fh.write("# 桌宠素材：有文件需要你确认\n\n")
@@ -199,8 +219,11 @@ def main():
                 for f in differs:
                     fh.write(f"- `{f}`\n")
                 fh.write("\n## 你要做的\n\n")
-                fh.write("如果这是**新的返工版**（要采纳），回一句话让我覆盖即可；\n"
-                         "如果这是**旧包重新投递**（要丢弃），直接删掉它就行。\n\n")
+                fh.write("如果这是**新的返工版**（要采纳），让我重跑一句：\n\n")
+                fh.write("```\npython3 intake-assets.py --accept "
+                         + ",".join(os.path.splitext(f)[0] for f in differs)
+                         + "\n```\n\n")
+                fh.write("如果这是**旧包重新投递**（要丢弃），直接删掉它就行。\n\n")
                 fh.write("备份在 `assets/.backup/<时间戳>/`，随时可回退。\n")
             print(f"    已写通知：{notice}")
 
@@ -230,11 +253,36 @@ def main():
 
         print("\n--- 验收合并后的全集 ---")
         sys.stdout.flush()
-        rc = subprocess.call([sys.executable, VERIFY, "--dir", merged_dir])
+        _r = subprocess.run([sys.executable, VERIFY, "--dir", merged_dir],
+                            capture_output=True, text=True)
+        _out = (_r.stdout or "") + (_r.stderr or "")
+        print(_out, end="")
         sys.stdout.flush()
-        if rc != 0:
+        if _r.returncode != 0:
             print("\n未通过验收 → 项目保持原样，未安装。请把上面的 FAIL 反馈给制作方。")
             return 1
+
+        # —— 三重防护之三：被 accept 的返工稿不能带着告警装进来 ——
+        # verify 的每条 WARN 都是"用户能看得出来的毛病"。返工的目的就是清掉它，
+        # 带着旧告警装进来 = 白返工一轮。只卡被 accept 的那几支，
+        # 别的素材早有告警（比如 error）不该连累这次交付。
+        if accepted:
+            own = []
+            for line in _out.splitlines():
+                s = line.strip()
+                if not s.startswith("!"):
+                    continue
+                for f in accepted:
+                    c = os.path.splitext(f)[0]
+                    if s.startswith("! %s:" % c) or s.startswith("! %s#" % c):
+                        own.append(s[1:].strip())
+            if own:
+                print(f"\n被声明的返工稿仍有 {len(own)} 条告警 → **不安装**"
+                      f"（正式素材保持原样）：")
+                for s in own:
+                    print(f"  · {s}")
+                print("  验收标准见 docs/run-返工说明.md（这批要求哪几条）")
+                return 1
 
         if args.dry_run:
             print("\n(dry-run) 验收通过，未安装。")

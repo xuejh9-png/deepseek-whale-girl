@@ -242,13 +242,36 @@ web/pet.js              胶水层：拉状态 + 指针事件 + 宿主通信
 desktop/main.swift      Swift 透明窗口宿主（无边框 / 置顶 / 鼠标穿透 / 全局快捷键）
 assets/pet/             角色素材（10 个 Sprite Sheet + manifest.json / manifest.js）
 
-verify-assets.py        素材逐帧验收（几何 / 循环接缝 / 透明度 / 可见性下限）
-intake-assets.py        素材自动接收入库（只自动新增，永不覆盖已有素材）
+verify-assets.py        素材逐帧验收（几何 / 循环接缝 / 透明度 / 步幅 / 横向缩放 / 腾空间隔）
+intake-assets.py        素材接收：扫桌面&下载的交付包 → 验收 → 通过才安装（默认只新增不覆盖）
 build-manifest-js.py    manifest.json → manifest.js（让 file:// 也能读到）
-pet-runtime.test.html   动画运行时回归测试（33 项）
-pet-bridge.test.html    宿主 ↔ 网页 桥的回归测试（12 项）
-pet_sources.test.py     状态推断回归测试（13 项）
+pet-runtime.test.html   动画运行时回归测试（35 项）
+pet-bridge.test.html    宿主 ↔ 网页 桥的回归测试（21 项）
+pet-wake.test.html      睡着→点醒→起身→再睡 的交互回归（11 项）
+pet_sources.test.py     状态推断回归测试（32 项）
+docs/                   返工说明 / 对比证据图 / 给制作方的说明
 ```
+
+### 素材交付流程（改素材只有这一条路）
+
+**投递位置：桌面或下载目录，放一个 zip**（内部按项目结构，如 `assets/pet/run.png`）。
+裸的 png 不会被捡 —— 接收程序只认 zip，或名为 `pet/` 的文件夹。
+
+```bash
+python3 intake-assets.py --dry-run          # 只找 + 验收，不动项目
+python3 intake-assets.py --accept run       # 声明"run 是返工升级、允许覆盖同名"
+```
+
+四道闸门（缺一条都可能把线上弄坏）：
+
+| 闸门 | 作用 |
+|---|---|
+| 只自动**新增** | 同名不同内容的文件默认跳过，防止旧包降级覆盖（2026-09-22 出过这个事故）|
+| 覆盖必须**显式 `--accept`** | 等于把"人工确认这是升级"变成一条命令 |
+| **零告警才放行** | 被 accept 的返工稿不能带着 `!` 告警装进来 —— 返工的目的就是清掉它 |
+| 安装前**整目录备份** | `assets/.backup/<时间戳>/`，随时回退 |
+
+给制作方的完整话术（可直接转发）：`docs/给制作方的说明.md`
 
 ### 回归怎么跑
 
