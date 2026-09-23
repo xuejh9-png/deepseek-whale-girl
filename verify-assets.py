@@ -60,6 +60,13 @@ LEG_TOP = 245           # 腿部起始高度（画布坐标）
 STRIDE_MIN_POSES = 8
 STRIDE_MIN_COLS = 60    # 任意两帧腿部轮廓至少要差这么多列
 
+# 「整只被横向压窄」判据（2026-09-23 补）
+# 量的是【角色上 40% 段的宽 / 角色高】—— 头部是刚体，这个比例只该随视角变、
+# 不该随帧号变。实测标定：idle 自身波动仅 3%（97.9%~101.1%），
+# jump/drag/success 最低 90%，所以阈值取 88% 误报风险很低。
+# 用户反馈"跑的时候人物被压缩了"就是被这条抓到的：run 最低 74%。
+WIDTH_RATIO_MIN = 0.88
+
 
 def load(path, fw, fh, cols, n):
     im = Image.open(path).convert("RGBA")
@@ -214,8 +221,14 @@ def main():
                 metrics.append(None)
                 continue
             x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
+            h = int(y1 - y0 + 1)
+            # 头段（角色上 40%）宽度 / 角色高 —— 查"整只被横向压窄"
+            band = fr[0][y0:y0 + max(1, int(h * 0.40))]
+            bxs = np.where(band.any(axis=0))[0]
+            hw = int(bxs.max() - bxs.min() + 1) if len(bxs) else 0
             metrics.append(dict(
                 feet=int(y1), cx=(x0 + x1) / 2, h=int(y1 - y0 + 1), w=int(x1 - x0 + 1),
+                hratio=(hw / float(h) if h else 0.0),
                 air=(i + 1) in air, idx=i + 1))
         # 四角 / 背景
         for i in range(n):
@@ -235,6 +248,14 @@ def main():
     all_ground = [mm["feet"] for c in data.values() for mm in c["metrics"]
                   if mm and not mm["air"]]
     base = int(np.median(all_ground)) if all_ground else int(GY)
+
+    # 横向缩放的基准取 idle —— idle 是"标准姿态"，其它剪辑都该跟她同一比例
+    hr_base = None
+    if "idle" in data:
+        rs = [mm["hratio"] for mm in data["idle"]["metrics"] if mm and mm["hratio"]]
+        if rs:
+            hr_base = float(np.median(rs))
+
     if abs(base - GY) > TOL_FEET_ABS:
         warns.append(f"全套接地帧脚底中位数 {base}，离地面线 {GY:.0f} 偏 {base-GY:+.0f}px"
                      f"（约 {(base-GY)*0.5:+.1f} CSS px，肉眼不可见，不阻塞）")
@@ -318,6 +339,19 @@ def main():
                 warns.append(
                     f"{clip}: 腿几乎没有前后摆动（{poses} 个姿态、最大摆幅 {maxcols} 列）"
                     f" → 运行时是「上下弹着平移」而不是跑，见 docs/run-返工说明.md")
+
+        # 横向缩放：头段宽/角色高 只该随视角变，不该随帧号变
+        if hr_base:
+            rs = [mm["hratio"] for mm in metrics if mm and mm["hratio"]]
+            if rs:
+                lo = min(rs) / hr_base
+                report.append(f"           角色宽度比例 最低 {lo*100:.0f}%"
+                              f"（100% = 与 idle 同比例；期望 ≥{WIDTH_RATIO_MIN*100:.0f}%）")
+                if lo < WIDTH_RATIO_MIN:
+                    warns.append(
+                        f"{clip}: 角色被横向压窄 —— 最低只有 idle 的 {lo*100:.0f}%"
+                        f"（高度没变，头/上身/下身一起窄 → 是整只等比横向缩放，不是姿势）。"
+                        f"运行时会看到「边跑边被捏扁」")
 
     # ---------- 输出 ----------
     if not args.quiet:
