@@ -216,15 +216,20 @@ def foot_lock(path, fw, fh, cols, n, leg_top, ground, stride_px):
         for b in unassigned:
             tracks.append(dict(x=[b[0]], y=[b[1]], last=fi))
 
+    # 只取"向后走"的那些帧间位移（负值 = 向后 = 支撑期），
+    # 摆动期脚是向前走的，混进来会把中位数拉低（2026-09-24 修正：
+    # 上一版混着算，把构造上正确的 15px 压成了 7px 的 47%）
     deltas = []
     for t in tracks:
         for k in range(1, len(t["x"])):
             if t["y"][k] >= ground - 3 and t["y"][k-1] >= ground - 3:
-                deltas.append(t["x"][k] - t["x"][k-1])
+                d = t["x"][k] - t["x"][k-1]
+                if d < 0:
+                    deltas.append(-d)
     exp = stride_px / float(n)
     if not deltas:
         return exp, 0.0, 0.0
-    med = float(np.median([abs(v) for v in deltas]))
+    med = float(np.median(deltas))
     return exp, med, (med/exp if exp else 0)
 
 

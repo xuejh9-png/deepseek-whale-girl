@@ -136,8 +136,22 @@ def main():
     x0b, y0b, x1b, y1b = tight_box(sub)
     leg = f1.crop((x0 + x0b, y0b, x0 + x1b + 1, y1b + 1))
     leg.save(os.path.join(args.debug_dir, "leg_canon.png"))
-    # 脚底参考点：精灵底部的中点（= 鞋底中心）
-    foot_local = (leg.width / 2.0, leg.height - 1.0)
+    # 脚底参考点：**用鞋的像素块**定，不能用包围盒中点。
+    # ⚠️ 2026-09-24：一开始用包围盒底部中点，结果精灵里混进了裙摆（宽 134，
+    # 而鞋只有 ~40），参考点偏了 30px，脚全部贴错位置。
+    lr = np.array(leg.convert("RGB")).astype(int)
+    la = np.array(leg.split()[-1]) > 128
+    lm = la & (lr[:, :, 0] < 115) & (lr[:, :, 1] < 125) & (lr[:, :, 2] > 85) \
+         & (lr[:, :, 2] > lr[:, :, 0] + 10)
+    if lm.any():
+        lys = np.where(lm.any(axis=1))[0]
+        lxs = np.where(lm.any(axis=0))[0]
+        foot_local = ((lxs.min() + lxs.max()) / 2.0, float(lys.max()))
+        print("标准腿里的鞋块：x %d~%d y %d~%d → 脚参考点 %s"
+              % (lxs.min(), lxs.max(), lys.min(), lys.max(), foot_local))
+    else:
+        foot_local = (leg.width / 2.0, leg.height - 1.0)
+        print("！没找到鞋块，退回包围盒底部中点 %s" % (foot_local,))
     leg_len = leg.height
     print("身体已提取（裙摆下沿 y=%d，下延 12px）" % HEM)
     print("标准腿精灵：%dx%d，脚底参考点 %s，腿长参考 %d px"
@@ -160,6 +174,15 @@ def main():
             angle = np.arctan2(dx, -dy)                # 0 = 竖直
             scale = dist / float(leg_len)
             lay = rot_about(leg, foot_local, (tx, ty), angle, scale)
+            # ⚠️ 旋转后鞋底的角会往下探出接地线 → 整体高度被带高（实测 5.9%）。
+            # 把图层的最低点对齐到目标 y，保证接地帧的包围盒底就是接地线。
+            la = np.array(lay.split()[-1]) > 128
+            if la.any() and ty >= GROUND - 1:
+                ys = np.where(la.any(axis=1))[0]
+                dy = ty - ys.max()
+                if dy:
+                    lay = lay.transform(lay.size, Image.AFFINE, (1, 0, 0, 0, 1, -dy),
+                                        resample=Image.BICUBIC)
             layer.alpha_composite(lay)
             info.append("(%.0f,%.0f) 长%.0f 角%.0f°" % (tx, ty, dist, np.degrees(angle)))
         # 先腿后身 → 裙摆自然盖住腿根
