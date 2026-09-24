@@ -73,6 +73,9 @@ STRIDE_MIN_COLS = 60    # 仅作报告参考：长裙摆会把列差压小，不
 FOOT_TRAVEL_MIN = 40
 # 脚锁定达成率下限：实测后移量 / 期望后移量。0.5 = 至少走了一半，低于此判打滑
 FOOT_LOCK_MIN = 0.5
+# 鞋底倾角上限：人跑支撑脚 0~10°、蹬地瞬间最多约 30°。
+# 超过 45° 一定是错的（鞋子快竖起来了）—— 实测旧素材到过 83°
+SHOE_TILT_MAX = 45
 # 两脚跨度（角色底部 12% 高度带里轮廓的左右范围 ÷ 角色高）。
 # 用户反馈"感觉只迈了一只脚"的直接原因：上一版触地帧两脚只差 33% 角色高，
 # 两腿挤在一起 → 画面上读不出"跨步"。实测改宽后 52%。
@@ -148,6 +151,63 @@ def display_changes(path, fw, fh, cols, ls, le):
         a, b = cell(i - 1), cell(i)
         out.append(int((np.abs(a - b).max(axis=2) > CHANGE_PX_TH).sum()))
     return out
+
+
+def shoe_tilt(path, fw, fh, cols, n, leg_top):
+    """量鞋底相对地面的倾角 —— 有没有"人脚踝做不到的姿态"。
+
+    2026-09-24 用户反馈："脚踝根本不是人可以走出来的"。
+    量出来支撑期鞋子的倾角最大到 83°（鞋子快竖起来了），
+    而人跑步时支撑脚应该 0~10°（贴着地）、蹬地瞬间最多约 30°。
+    83° 是踝关节不可能折到的角度。
+
+    做法：腿部区域里取鞋的像素块，对像素做 PCA 取长轴，算它与水平线的夹角。
+    返回 (最大倾角, 逐帧倾角列表)。
+    """
+    im = Image.open(path)
+    rgb = np.array(im.convert("RGB")).astype(int)
+    alpha = np.array(im.split()[-1]) > 128
+    angs = []
+    for i in range(n):
+        r, c = divmod(i, cols)
+        cell = rgb[r*fh+leg_top:r*fh+fh, c*fw:(c+1)*fw]
+        al = alpha[r*fh+leg_top:r*fh+fh, c*fw:(c+1)*fw]
+        R, G, B = cell[:, :, 0], cell[:, :, 1], cell[:, :, 2]
+        shoe = al & (R < 115) & (G < 125) & (B > 85) & (B > R + 10)
+        cols_any = shoe.any(axis=0)
+        segs, run, st = [], False, 0
+        for k in range(len(cols_any)):
+            v = cols_any[k]
+            if v and not run:
+                run, st = True, k
+            elif not v and run:
+                run = False
+                if k - st >= 5:
+                    segs.append((st, k))
+        if run and len(cols_any) - st >= 5:
+            segs.append((st, len(cols_any)))
+        merged = []
+        for s2 in segs:
+            if merged and s2[0] - merged[-1][1] <= 8:
+                merged[-1] = (merged[-1][0], s2[1])
+            else:
+                merged.append(list(s2))
+        for s2 in merged:
+            m = shoe[:, s2[0]:s2[1]]
+            ys, xs = np.where(m)
+            if len(xs) < 30:
+                continue
+            X = np.stack([xs - xs.mean(), ys - ys.mean()])
+            cov = X @ X.T / len(xs)
+            w, v = np.linalg.eigh(cov)
+            axis = v[:, int(np.argmax(w))]
+            ang = np.degrees(np.arctan2(axis[1], axis[0]))
+            if ang > 90:
+                ang -= 180
+            if ang < -90:
+                ang += 180
+            angs.append(abs(ang))
+    return (max(angs) if angs else 0.0), angs
 
 
 def foot_lock(path, fw, fh, cols, n, leg_top, ground, stride_px):
@@ -483,6 +543,15 @@ def main():
                 warns.append(
                     f"{clip}: 腿几乎没有前后摆动（{poses} 个姿态、脚帧间位移只有 {maxfoot}px）"
                     f" → 运行时是「上下弹着平移」而不是跑，见 docs/run-返工说明.md")
+
+            # —— 鞋底倾角：有没有"人脚踝做不到的姿态" ——
+            tmax, tangs = shoe_tilt(os.path.join(root, m["file"]), FW, FH, COLS, n, LEG_TOP)
+            report.append(f"           鞋底倾角 最大 {tmax:.0f}°（支撑期应 ≤10°、蹬地最多 30°；"
+                          f"超过 {SHOE_TILT_MAX:.0f}° = 脚踝折不到的角度）")
+            if tmax > SHOE_TILT_MAX:
+                warns.append(
+                    f"{clip}: 出现过人脚踝做不到的姿态（鞋底倾角最大 {tmax:.0f}°）"
+                    f" → 看着像「鞋子挂在脚踝上晃」，用户反馈过这条")
 
             # —— 脚锁定（foot lock）：跑步最重要的运动学约束 ——
             # 支撑期脚踩在地上不打滑 → 它必须相对身体以 -窗口速度 匀速后移。
