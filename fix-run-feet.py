@@ -30,6 +30,8 @@ CELL_W, CELL_H = 320, 400
 LEG_TOP = 300          # 只看裙摆以下（避免把深蓝围裙当鞋）
 TILT_MIN = 0.0         # 允许的最小倾角
 TILT_MAX = 20.0        # 允许的最大倾角（用户指定 0~20°）
+GROUND = 358           # 接地线。⚠️ 回正后鞋的另一个角会探到线下面去
+                       # （实测 4 帧穿地 2px），必须再夹一次
 
 
 def shoe_mask(cell):
@@ -140,6 +142,16 @@ def main():
             A = (ca, sa, pcx - ca*pcx - sa*pcy,
                  -sa, ca, pcy + sa*pcx - ca*pcy)
             spr = sub.transform(sub.size, Image.AFFINE, A, resample=Image.BICUBIC)
+            # 不许穿地：绕接触点旋转时，鞋的另一个角可能转到接地线以下，
+            # 整体往上挪回来（只挪竖直方向，不动水平）
+            sa2 = np.array(spr.split()[-1]) > 128
+            if sa2.any():
+                sy = np.where(sa2.any(axis=1))[0]
+                bottom = by0 + int(sy.max())
+                if bottom > GROUND:
+                    spr = spr.transform(spr.size, Image.AFFINE,
+                                        (1, 0, 0, 0, 1, -(bottom - GROUND)),
+                                        resample=Image.BICUBIC)
             cell.alpha_composite(spr, (bx0, by0))
         out.alpha_composite(cell, (c*CELL_W, r*CELL_H))
         print("#%-3d %-34s %s"
