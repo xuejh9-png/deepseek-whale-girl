@@ -546,9 +546,15 @@ def main():
 
             # —— 鞋底倾角：有没有"人脚踝做不到的姿态" ——
             tmax, tangs = shoe_tilt(os.path.join(root, m["file"]), FW, FH, COLS, n, LEG_TOP)
+            # ⚠️ 视角依赖：这两条（鞋底倾角、脚锁定）都假设**纯侧视** ——
+            # 鞋的长轴在画面里是水平的。换成 3/4（半侧）视角后，脚朝"前+里"，
+            # 画面上的鞋本来就是斜的、被透视压短 → 量出来的角度没有意义。
+            # 2026-09-24 实测：它声明支撑脚 7°，我量出 79° —— 差的就是视角。
+            _side = m.get("viewAngle", "side") != "threeQuarter"
             report.append(f"           鞋底倾角 最大 {tmax:.0f}°（支撑期应 ≤10°、蹬地最多 30°；"
-                          f"超过 {SHOE_TILT_MAX:.0f}° = 脚踝折不到的角度）")
-            if tmax > SHOE_TILT_MAX:
+                          f"超过 {SHOE_TILT_MAX:.0f}° = 脚踝折不到的角度）"
+                          + ("【3/4 视角，此条仅报告不拦截】" if not _side else ""))
+            if tmax > SHOE_TILT_MAX and _side:
                 warns.append(
                     f"{clip}: 出现过人脚踝做不到的姿态（鞋底倾角最大 {tmax:.0f}°）"
                     f" → 看着像「鞋子挂在脚踝上晃」，用户反馈过这条")
@@ -559,7 +565,7 @@ def main():
                                         LEG_TOP, GY, m.get("stridePxPerCycle", 180))
             report.append(f"           脚锁定 期望每帧后移 {exp:.1f}px / 实测 {got:.1f}px"
                           f"（达成 {ratio*100:.0f}%；低于 {FOOT_LOCK_MIN*100:.0f}% = 脚在打滑）")
-            if ratio < FOOT_LOCK_MIN:
+            if ratio < FOOT_LOCK_MIN and _side:
                 warns.append(
                     f"{clip}: 支撑期脚在打滑（脚每帧只后移 {got:.1f}px，应 {exp:.1f}px）"
                     f" → 看着像踩跑步机滑行，而不是蹬地前进")
