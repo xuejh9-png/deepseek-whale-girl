@@ -78,7 +78,8 @@ window.PET_MANIFEST = {
       "loop": true,
       "loopStart": 1,
       "loopEnd": 12,
-      "flipForLeft": true
+      "flipForLeft": true,
+      "stridePxPerCycle": 180
     },
     "success": {
       "file": "success.png",

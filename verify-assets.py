@@ -71,6 +71,8 @@ STRIDE_MIN_COLS = 60    # 仅作报告参考：长裙摆会把列差压小，不
 # 走"小步快跑"时，**脚的实际位移**才是"腿有没有在动"的有效证据（2026-09-23 补）。
 # 例：新素材轮廓列差只有 23 列（裙子挡住了大半条腿），但脚其实走了 87px。
 FOOT_TRAVEL_MIN = 40
+# 脚锁定达成率下限：实测后移量 / 期望后移量。0.5 = 至少走了一半，低于此判打滑
+FOOT_LOCK_MIN = 0.5
 # 两脚跨度（角色底部 12% 高度带里轮廓的左右范围 ÷ 角色高）。
 # 用户反馈"感觉只迈了一只脚"的直接原因：上一版触地帧两脚只差 33% 角色高，
 # 两腿挤在一起 → 画面上读不出"跨步"。实测改宽后 52%。
@@ -146,6 +148,84 @@ def display_changes(path, fw, fh, cols, ls, le):
         a, b = cell(i - 1), cell(i)
         out.append(int((np.abs(a - b).max(axis=2) > CHANGE_PX_TH).sum()))
     return out
+
+
+def foot_lock(path, fw, fh, cols, n, leg_top, ground, stride_px):
+    """支撑期「脚锁定 / foot lock」—— 跑步最重要的运动学约束。
+
+    为什么必须验这条（2026-09-24 补）：
+    用户反馈跑步"死板、企业级不合格"。量出接地脚的水平位置在 12 帧里是
+    169/184/181/179/182/181/181/179/182/164/169/169 —— **原地抖 ±10px**，
+    而按窗口速度它每帧应相对身体后移 stride/n px。实测 ≈ 0。
+    脚不向后走 = 踩在跑步机上滑行 = 没有地面接触的物理。
+    这条同时也是"只迈了一只脚"的真因：那只永远停在最前面的脚就是没往后走的。
+
+    做法：腿部区域里找两只鞋（深蓝、按列分块），逐帧按 x 就近关联成轨迹；
+    取"脚底贴地"的那些帧，看 x 是不是在以 -stride/n px/帧 后移。
+
+    返回 (期望每帧位移, 实测每帧位移, 达成率)。
+    """
+    im = Image.open(path)
+    rgb = np.array(im.convert("RGB")).astype(int)
+    alpha = np.array(im.split()[-1]) > 128
+
+    per_frame = []
+    for i in range(n):
+        r, c = divmod(i, cols)
+        cell = rgb[r*fh+leg_top:r*fh+fh, c*fw:(c+1)*fw]
+        al = alpha[r*fh+leg_top:r*fh+fh, c*fw:(c+1)*fw]
+        R, G, B = cell[:, :, 0], cell[:, :, 1], cell[:, :, 2]
+        shoe = al & (R < 115) & (G < 125) & (B > 85) & (B > R + 10)
+        cols_any = shoe.any(axis=0)
+        segs, run, st = [], False, 0
+        for k in range(len(cols_any)):
+            v = cols_any[k]
+            if v and not run:
+                run, st = True, k
+            elif not v and run:
+                run = False
+                if k - st >= 4:
+                    segs.append((st, k))
+        if run and len(cols_any) - st >= 4:
+            segs.append((st, len(cols_any)))
+        merged = []
+        for s2 in segs:
+            if merged and s2[0] - merged[-1][1] <= 8:
+                merged[-1] = (merged[-1][0], s2[1])
+            else:
+                merged.append(list(s2))
+        blobs = []
+        for s2 in merged:
+            sub = shoe[:, s2[0]:s2[1]]
+            ys = np.where(sub.any(axis=1))[0]
+            blobs.append(((s2[0]+s2[1])//2, (ys.max()+leg_top) if len(ys) else 0))
+        per_frame.append(blobs)
+
+    tracks = []
+    for fi, blobs in enumerate(per_frame):
+        unassigned = list(blobs)
+        for t in tracks:
+            if fi - t["last"] > 3 or not unassigned:
+                continue
+            cand = min(unassigned, key=lambda b: abs(b[0]-t["x"][-1]))
+            if abs(cand[0] - t["x"][-1]) <= 30:
+                t["x"].append(cand[0])
+                t["y"].append(cand[1])
+                t["last"] = fi
+                unassigned.remove(cand)
+        for b in unassigned:
+            tracks.append(dict(x=[b[0]], y=[b[1]], last=fi))
+
+    deltas = []
+    for t in tracks:
+        for k in range(1, len(t["x"])):
+            if t["y"][k] >= ground - 3 and t["y"][k-1] >= ground - 3:
+                deltas.append(t["x"][k] - t["x"][k-1])
+    exp = stride_px / float(n)
+    if not deltas:
+        return exp, 0.0, 0.0
+    med = float(np.median([abs(v) for v in deltas]))
+    return exp, med, (med/exp if exp else 0)
 
 
 def stride_profile(path, fw, fh, cols, n, leg_top=LEG_TOP, leg_bot=LEG_BOT):
@@ -399,7 +479,18 @@ def main():
                     f"{clip}: 腿几乎没有前后摆动（{poses} 个姿态、脚帧间位移只有 {maxfoot}px）"
                     f" → 运行时是「上下弹着平移」而不是跑，见 docs/run-返工说明.md")
 
-            # 两次腾空必须等间隔 —— 不然一条腿的步时比另一条长，细看会"跛"。
+            # —— 脚锁定（foot lock）：跑步最重要的运动学约束 ——
+            # 支撑期脚踩在地上不打滑 → 它必须相对身体以 -窗口速度 匀速后移。
+            exp, got, ratio = foot_lock(os.path.join(root, m["file"]), FW, FH, COLS, n,
+                                        LEG_TOP, GY, m.get("stridePxPerCycle", 180))
+            report.append(f"           脚锁定 期望每帧后移 {exp:.1f}px / 实测 {got:.1f}px"
+                          f"（达成 {ratio*100:.0f}%；低于 {FOOT_LOCK_MIN*100:.0f}% = 脚在打滑）")
+            if ratio < FOOT_LOCK_MIN:
+                warns.append(
+                    f"{clip}: 支撑期脚在打滑（脚每帧只后移 {got:.1f}px，应 {exp:.1f}px）"
+                    f" → 看着像踩跑步机滑行，而不是蹬地前进")
+
+            # 腾空/两脚交替的间隔
             # 一次腾空常占 2 帧（顶点 + 下落），所以先把连续的并成一组再比组间隔。
             air_idx = [mm["idx"] for mm in metrics if mm and mm["feet"] < base - 8]
             groups = []
