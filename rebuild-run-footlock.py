@@ -37,6 +37,10 @@ FRONT_X = 190      # 前脚位置
 BACK_X = 145       # 后脚位置
 STEP_PX = 15       # 每帧后移量 = stridePxPerCycle / 帧数 = 180/12
 LIFT = 22          # 摆动期抬脚高度
+SHOE_SCALE = 0.92  # 腿整体缩小（用户反馈：上一版鞋子画得偏大）
+FAR_UP = 5         # 远腿抬高（3/4 视角：远腿在画面上更高）
+FAR_DIM = 0.86     # 远腿压暗（3/4 视角：远腿在阴影里）
+FAR_SCALE = 0.95   # 远腿略小（透视）
 
 
 def cell_of(sheet, i):
@@ -116,10 +120,21 @@ def main():
     body = Image.fromarray(body_arr)
     body.save(os.path.join(args.debug_dir, "body.png"))
 
+    # ---- 1b. 自动找裙摆下沿：轮廓宽度骤减的那一行就是裙摆底 ----
+    mA = np.array(cell_of(sheet, 0).split()[-1]) > 128
+    widths = mA.sum(axis=1)
+    maxw = widths.max()
+    hem = HEM
+    for y in range(int(HEM * 0.8), min(int(HEM * 1.25), CELL_H)):
+        if widths[y] < maxw * 0.5:
+            hem = y
+            break
+    print("自动测得裙摆下沿 y=%d（原写死 %d）" % (hem, HEM))
+
     # ---- 2. 一条标准腿精灵：取第 1 帧前腿（分界线以下的连通块）----
     A = np.array(f1.split()[-1]) > 128
     legmask = A.copy()
-    legmask[:HEM] = False
+    legmask[:hem] = False
     # 前腿 = 最靠右的鞋块所在的那一连通块 → 用列的连通段近似
     cols_any = legmask.any(axis=0)
     runs, st = [], None
@@ -135,6 +150,9 @@ def main():
     sub = legmask[:, x0:x1+1]
     x0b, y0b, x1b, y1b = tight_box(sub)
     leg = f1.crop((x0 + x0b, y0b, x0 + x1b + 1, y1b + 1))
+    if SHOE_SCALE != 1.0:
+        leg = leg.resize((max(1, int(round(leg.width * SHOE_SCALE))),
+                          max(1, int(round(leg.height * SHOE_SCALE)))), Image.LANCZOS)
     leg.save(os.path.join(args.debug_dir, "leg_canon.png"))
     # 脚底参考点：**用鞋的像素块**定，不能用包围盒中点。
     # ⚠️ 2026-09-24：一开始用包围盒底部中点，结果精灵里混进了裙摆（宽 134，
@@ -166,7 +184,16 @@ def main():
         ox, oy = c*CELL_W, r*CELL_H
         layer = Image.new("RGBA", (CELL_W, CELL_H), (0, 0, 0, 0))
         info = []
-        for side, (tx, ty) in enumerate(foot_schedule(i)):
+        sched = foot_schedule(i)
+        # ★ 3/4 视角：远腿先画（在后面）、抬高、压暗、略小；近腿后画、原位、全亮。
+        #   两条腿的身份是固定的（左腿=近腿，右腿=远腿），所以"近腿在前"和
+        #   "远腿在前"在画面上**是两张不同的图** → 交替终于读得出来。
+        #   2026-09-24 用户反馈："腿完全侧过去了，其实跑步的人是半侧身子朝向我的"。
+        order = [(1, True), (0, False)]
+        for side, is_far in order:
+            tx, ty = sched[side]
+            if is_far:
+                ty = ty - FAR_UP
             dx = HIP[0] - tx
             dy = HIP[1] - ty
             dist = np.hypot(dx, dy)
@@ -176,6 +203,10 @@ def main():
             lay = rot_about(leg, foot_local, (tx, ty), angle, scale)
             # ⚠️ 旋转后鞋底的角会往下探出接地线 → 整体高度被带高（实测 5.9%）。
             # 把图层的最低点对齐到目标 y，保证接地帧的包围盒底就是接地线。
+            if is_far:
+                ar = np.array(lay)
+                ar[:, :, :3] = (ar[:, :, :3] * FAR_DIM).astype(np.uint8)
+                lay = Image.fromarray(ar)
             la = np.array(lay.split()[-1]) > 128
             if la.any() and ty >= GROUND - 1:
                 ys = np.where(la.any(axis=1))[0]
@@ -184,7 +215,7 @@ def main():
                     lay = lay.transform(lay.size, Image.AFFINE, (1, 0, 0, 0, 1, -dy),
                                         resample=Image.BICUBIC)
             layer.alpha_composite(lay)
-            info.append("(%.0f,%.0f) 长%.0f 角%.0f°" % (tx, ty, dist, np.degrees(angle)))
+            info.append("%s(%.0f,%.0f)" % ("远" if is_far else "近", tx, ty))
         # 先腿后身 → 裙摆自然盖住腿根
         out.alpha_composite(layer, (ox, oy))
         out.alpha_composite(body, (ox, oy))
