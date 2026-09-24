@@ -166,10 +166,21 @@ html, body {
   100% { transform: scale(1); }
 }
 
-.pet[data-state="thinking"] .fx-dots  { display: flex; }
-.pet[data-state="working"]  .fx-ring  { display: block; }
+/* thinking 与 working 都用「三个点」。
+   2026-09-24 用户反馈：working 原来是个转圈的小环（fx-ring），
+   但"干活"可能持续很久，那个圈就**一直转**，看着丑。
+   他要求统一用三个点的效果。
+   为了两个状态还能分辨：working 的点跳得略快、颜色略深。 */
+.pet[data-state="thinking"] .fx-dots { display: flex; }
+.pet[data-state="working"]  .fx-dots {
+  display: flex;
+  animation-duration: .85s;              /* 比 thinking 的 1.2s 快一档 */
+}
+.pet[data-state="working"]  .fx-dots i { background: #1e56d6; }
 .pet[data-state="success"]  .fx-check { display: block; }
 .pet[data-state="error"]    .fx-mark  { display: block; }
+
+/* fx-ring（转圈小环）已弃用，保留样式以便回退；当前没有任何状态在用它 */
 
 /* ---------- 尊重系统的"减少动态效果" ---------- */
 @media (prefers-reduced-motion: reduce) {
