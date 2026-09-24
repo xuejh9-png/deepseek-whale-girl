@@ -31,3 +31,6 @@ assets/run-12-final/*.zip
 assets/run-12-final/*.html
 assets/run-12-final/*.webp
 assets/run-12-final/*.png
+
+# 用量面板截图含真实用量数字，不入库（README 已撤掉引用）
+docs/report.png

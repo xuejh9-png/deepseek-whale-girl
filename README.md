@@ -8,6 +8,10 @@
 
 ![状态](docs/pet-states.png)
 
+她本人在桌面上长这样（截图于 2026-09-24，头顶那三个点是"正在思考"的状态提示）：
+
+![deepseek 鲸鱼娘](docs/pet-screenshot.png)
+
 > 顺带说明：**这不是 WorkBuddy 官方功能**，是一个独立的本地小工具，
 > 只读 WorkBuddy 写在磁盘上的记录文件，不改它、也不联网。
 
@@ -39,7 +43,8 @@ WorkBuddy 客户端**只显示积分（credits），不显示 token 数**。
 
 ## 用量面板
 
-![用量面板](docs/report.png)
+> 面板截图就不放了 —— 它上面是真实用量数字，公开仓库里没必要晒。
+> 你自己双击根目录的 `查看用量.command` 就能看到。
 
 ```bash
 python3 usage_stats.py              # 本月（默认只统计 DeepSeek）
