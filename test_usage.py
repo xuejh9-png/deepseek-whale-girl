@@ -20,7 +20,7 @@ import claude_cost as C
 
 def write(path, rows):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+    path.write_text(''.join(json.dumps(r) + '\n' for r in rows), encoding='utf-8')
 
 
 def counts(n, out=0, cached=0):
@@ -154,7 +154,7 @@ class BillingTests(unittest.TestCase):
 
     def snap(self,b):
         with tempfile.TemporaryDirectory() as tmp:
-            p=Path(tmp)/'bill.json';p.write_text(json.dumps(b));return C.snapshot(str(p))
+            p=Path(tmp)/'bill.json';p.write_text(json.dumps(b), encoding='utf-8');return C.snapshot(str(p))
 
     def test_claude_only_and_dedup(self):
         s=self.snap(self.bill());self.assertEqual(s['amount'],0.5);self.assertTrue(s['verified'])
@@ -203,9 +203,12 @@ class BillingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             b=self.bill();b['apiKey']='secret';b['entries'][0]['body']='secret'
             src=Path(tmp)/'raw.json';dst=Path(tmp)/'private/ledger.json';out=Path(tmp)/'export.json'
-            src.write_text(json.dumps(b));C.import_ledger(str(src),str(dst));C.import_ledger(str(dst),str(out))
-            self.assertEqual(dst.stat().st_mode & 0o777,0o600)
-            self.assertNotIn('secret',dst.read_text());self.assertEqual(C.snapshot(str(out))['amount'],0.5)
+            src.write_text(json.dumps(b), encoding='utf-8');C.import_ledger(str(src),str(dst));C.import_ledger(str(dst),str(out))
+            # Windows 不保留 POSIX 权限位（st_mode 恒为 0o666 附近），这条断言只在 POSIX 上成立。
+            # 真正要守住的是"文件在私有目录里、密钥被剥离"，权限位只是 POSIX 上的额外保证。
+            if os.name != 'nt':
+                self.assertEqual(dst.stat().st_mode & 0o777,0o600)
+            self.assertNotIn('secret',dst.read_text(encoding='utf-8'));self.assertEqual(C.snapshot(str(out))['amount'],0.5)
 
 
 class TaskTests(unittest.TestCase):
@@ -217,7 +220,7 @@ class TaskTests(unittest.TestCase):
                 for sid,kind,age in [('a','function_call',1000),('b','reasoning',1000),('c','message',30000)]:
                     write(root/'p/demo'/f'{sid}.jsonl',[{'timestamp':now-35000,'type':'message','role':'user','content':'任务文字 '+sid},
                                                       {'timestamp':now-age,'type':kind,'role':'assistant'}])
-                    (root/'s'/f'{sid}.json').write_text(json.dumps({'sessionId':sid,'lastHeartbeat':now-1000,'cwd':'/demo/'+sid}))
+                    (root/'s'/f'{sid}.json').write_text(json.dumps({'sessionId':sid,'lastHeartbeat':now-1000,'cwd':'/demo/'+sid}), encoding='utf-8')
                 source=S.WorkBuddySource();self.assertEqual(source.snapshot()['state'],'working')
                 tasks=source.tasks;self.assertEqual([t['state'] for t in tasks],['working','thinking','waiting'])
                 self.assertEqual([t['task'] for t in tasks],['任务文字 a','任务文字 b','任务文字 c'])
@@ -263,7 +266,7 @@ class ApiTests(unittest.TestCase):
                  patch.object(U,'load_session_meta',return_value={}):
                 result=D.regenerate_report()
                 self.assertTrue(result['ok'])
-                report=Path(out).read_text()
+                report=Path(out).read_text(encoding='utf-8')
                 self.assertIn('Token 活动（按天）',report)
                 self.assertNotIn('class="heat"',report)
                 self.assertFalse(Path(out+'.tmp').exists())

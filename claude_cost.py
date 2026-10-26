@@ -328,6 +328,7 @@ def import_ledger(source, destination=None):
         data = normalize(json.load(fh))
     destination = destination or LEDGER_PATH
     parent = os.path.dirname(os.path.abspath(destination))
+    # Windows 会忽略 mode（没有 POSIX 权限位），只有 POSIX 上才真的收紧到 0700
     os.makedirs(parent, mode=0o700, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=parent, prefix='.ledger-')
     try:

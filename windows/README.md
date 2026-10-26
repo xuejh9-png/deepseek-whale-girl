@@ -22,6 +22,27 @@
 
 ---
 
+## Windows 上跑 Python 侧的脚本 / 测试
+
+macOS 那套（`usage_stats.py` / `pet_daemon.py` / `test_usage.py`）也能在 Windows 跑，
+之前有两处会因为平台差异挂掉，已经修了：
+
+| 问题 | 原因 | 修法 |
+|---|---|---|
+| `UnicodeDecodeError` / 中文变乱码 | 读日志时没指定编码，Windows 默认是 GBK | 所有文本读写显式 `encoding="utf-8"` |
+| 权限断言失败 | Windows 没有 POSIX 权限位，`st_mode` 不反映 0600 | 该断言只在非 Windows 上执行 |
+
+验证方式（用 C locale 模拟非 UTF-8 环境）：
+
+```bash
+LC_ALL=C PYTHONUTF8=0 python3 -m unittest test_usage
+LC_ALL=C PYTHONUTF8=0 python3 pet_sources.test.py
+```
+
+两条都通过，说明不再依赖系统默认编码，也不依赖 POSIX 权限。
+
+---
+
 ## 本机实跑记录（macOS 上验证 Electron 版）
 
 ```
@@ -85,7 +106,15 @@ npm install
 npm start
 ```
 
-### 方式二：打成安装包（在 Windows 上执行）
+### 方式二：直接下安装包（不需要 Node）
+
+仓库的 GitHub Actions 会在 Windows runner 上自动打包：
+
+- **打 tag（`v*`）** → 自动构建并挂到
+  [Releases](https://github.com/xuejh9-png/deepseek-whale-girl/releases)，下载 `.exe` 双击即可
+- **手动触发** → Actions 页面点 `build-windows` 的 Run workflow，产物在 Artifacts 里
+
+### 方式三：自己打包（在 Windows 上执行）
 
 ```bat
 cd windows
@@ -93,14 +122,10 @@ npm install
 npm run dist
 ```
 
-产物在 `windows\dist\`（NSIS 安装包）。想要免安装的绿色版：
+产物在 `windows\dist\`（NSIS 安装包）。想要免安装的绿色版：`npm run dist:portable`。
 
-```bat
-npm run dist:portable
-```
-
-> `npm run dist` **必须在 Windows 上跑**。在 macOS/Linux 上交叉打包 Windows 安装包
-> 需要 wine，官方也不推荐，不保证可用。
+> `npm run dist` **必须在 Windows 上跑**。在 macOS/Linux 上交叉打包需要 wine，
+> 官方也不推荐，不保证可用 —— 所以有了上面那条 Actions 流水线。
 
 ---
 

@@ -238,7 +238,7 @@ def _parse_workbuddy_file(path):
     session = os.path.basename(path)[:-6]
     out = []
     try:
-        fh = open(path, "r", errors="ignore")
+        fh = open(path, "r", encoding="utf-8", errors="ignore")
     except OSError:
         return out
     with fh:
@@ -295,7 +295,7 @@ def load_codex_titles():
     if not os.path.exists(CODEX_INDEX):
         return titles
     try:
-        with open(CODEX_INDEX, "r", errors="ignore") as fh:
+        with open(CODEX_INDEX, "r", encoding="utf-8", errors="ignore") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -315,7 +315,7 @@ def _parse_codex_response_file(path):
     """单个 rollout 文件 → (turn_id→model, token_usage_record 列表, cwd)。"""
     turn_model, pending, cwd = {}, [], ""
     try:
-        fh = open(path, "r", errors="ignore")
+        fh = open(path, "r", encoding="utf-8", errors="ignore")
     except OSError:
         return turn_model, pending, cwd
     with fh:
@@ -405,7 +405,7 @@ def _parse_codex_snapshot_file(path):
     sid, turn, model, cwd = path, "", "", ""
     events = []
     try:
-        fh = open(path, errors="ignore")
+        fh = open(path, encoding="utf-8", errors="ignore")
     except OSError:
         return sid, events
     with fh:
@@ -475,7 +475,7 @@ def _parse_claude_file(path):
     out = []
     keys = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
     try:
-        fh = open(path, errors="ignore")
+        fh = open(path, encoding="utf-8", errors="ignore")
     except OSError:
         return out
     with fh:

@@ -26,16 +26,29 @@
 
 ## 30 秒上手
 
+### macOS
+
 | 想干什么 | 怎么做 |
 |---|---|
-| 看一共用了多少 token（DeepSeek + ChatGPT） | 双击 **`查看用量.command`**（或 `python3 usage_stats.py --open`） |
-| 查 Claude Code 一共花了多少钱 | `python3 claude_cost.py status`，或直接看桌宠顶部的「已花费」 |
 | 让鲸鱼娘浮在桌面上 | 双击 **`启动桌面宠物.command`** —— 首次会自动编译窗口，约 10 秒 |
-| 只想看看她的动画 | 双击 **`pet.html`** —— 不用装任何东西，也不需要 WorkBuddy |
-| **Windows 11 上用** | 见 [`windows/`](windows/README.md)：`cd windows && npm install && npm start`，或 `npm run dist` 打安装包 |
+| 看一共用了多少 token | 双击 **`查看用量.command`**（或 `python3 usage_stats.py --open`） |
+| 查 Claude Code 一共花了多少钱 | `python3 claude_cost.py status` |
+| 只想看看她的动画 | 双击 **`pet.html`** —— 不用装任何东西 |
 
-环境要求：**macOS + Python 3**（统计与状态服务只用标准库）。
-只有编译桌面窗口那一步才需要 Swift 命令行工具：`xcode-select --install`。
+### Windows 11
+
+| 想干什么 | 怎么做 |
+|---|---|
+| 装桌面宠物（**不想装 Node**） | 下 [Releases](https://github.com/xuejh9-png/deepseek-whale-girl/releases) 里的 `.exe`，双击安装 |
+| 装桌面宠物（已装 Node 18+） | 双击根目录 **`启动桌面宠物.bat`** —— 首次会自动装依赖 |
+| 只想看看她的动画 | 用浏览器打开 `pet.html`（只有动画，没有数据） |
+
+> Windows 版是 Electron，和 macOS 共用同一份前端与解析口径，详见
+> [`windows/README.md`](windows/README.md)。它只读 `%USERPROFILE%\.workbuddy`、
+> `\.codex`、`\.claude` 三处日志，不联网、不需要账号。
+
+环境要求：**macOS 版**需要 Python 3（只用标准库），编译窗口那一步要
+`xcode-select --install`；**Windows 版**打包后无依赖，源码跑需要 Node 18+。
 
 ---
 
