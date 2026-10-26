@@ -1,6 +1,6 @@
 /* ============================================================
    WorkBuddy Pet —— 桌面宠物样式（独立页面）
-   只负责角色本体。没有 HUD、没有面板、没有卡片、没有 Model/Token。
+   角色本体及留白中的两行小字。窗口尺寸不变。
    角色之外必须完全透明 —— 窗口透明靠 body 背景这一条。
    ============================================================ */
 
@@ -189,3 +189,35 @@ html, body {
   .fx-dots i,
   .fx-ring { animation: none !important; }
 }
+
+/* Two compact lines in the sprite canvas's empty top/bottom margins.
+   Keep controls outside petBody, so their clicks cannot start drag/reset/menu. */
+.pet-summary, .pet-meter {
+  position: absolute; left: 2px; right: 2px; height: 18px;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  color: #283449; font-size: 10px; line-height: 16px; white-space: nowrap;
+  text-shadow: none;
+}
+.pet-summary { top: 17px; }
+.pet-meter { bottom: 0; }
+.pet-summary button, .pet-meter button {
+  font: inherit; color: inherit; text-shadow: inherit; padding: 0 2px;
+  border: 0; border-radius: 4px; background: rgba(255,255,255,.72);
+  cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+/* 已花费：配色取自立绘本身 —— 围裙的暖白 + 头发的深蓝。
+   浅底深字比原来的近黑块更贴角色；实底 + 描边保证任何壁纸上都读得清。 */
+#petCost {
+  box-sizing: border-box; flex-shrink: 0; max-width: 100%;
+  padding: 0 5px; border-radius: 5px; line-height: 16px;
+  color: #2f4a8f; background: #fbf7f2; font-size: 11px; font-weight: 650;
+  border: 1px solid rgba(47,74,143,.32);
+  box-shadow: 0 1px 3px rgba(23,32,51,.2);
+}
+.pet-summary button, .pet-meter button {
+  background: #fff; color: #283449; border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.22);
+}
+.pet-summary button:hover, .pet-meter button:hover { background: #eaf1ff; }
+.pet-summary button:focus-visible, .pet-meter button:focus-visible { outline: 1px solid #2b6cff; }
+.pet-summary [hidden] { display: none; }

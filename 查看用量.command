@@ -19,10 +19,10 @@ if [ -z "$PY" ]; then
 fi
 
 echo ""
-echo "  WorkBuddy Token 用量查询"
+echo "  Codex + DeepSeek Token 用量查询"
 echo "  ────────────────────────────────"
-echo "   1) 本月（默认，直接回车）"
-echo "   2) 全部历史"
+echo "   1) 全部历史（默认，直接回车）"
+echo "   2) 只看本月"
 echo "   3) 最近 7 天"
 echo ""
 printf "  请选择 [1]: "
@@ -31,7 +31,7 @@ read choice
 # 注意：zsh 不会对 \${ARGS} 做分词，必须用数组
 ARGS=()
 case "$choice" in
-  2) ARGS=(--all) ;;
+  2) ARGS=(--month "$(date +%Y-%m)") ;;
   3) ARGS=(--days 7) ;;
   *) ARGS=() ;;
 esac

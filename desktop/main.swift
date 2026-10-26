@@ -608,7 +608,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                          y: f.minY + f.height * 0.05,
                          width: f.width * 0.68,
                          height: f.height * 0.76)
-        let inside = hit.contains(mouse)
+        // HTML controls occupy only y=17...35 and y=182...200 CSS px.
+        // Cocoa's y axis starts at the bottom. Preserve the existing body hitbox.
+        let summary = NSRect(x: f.minX + 2, y: f.maxY - 35,
+                             width: f.width - 4, height: 18)
+        let meter = NSRect(x: f.minX + 2, y: f.minY,
+                           width: f.width - 4, height: 18)
+        let inside = hit.contains(mouse) || summary.contains(mouse) || meter.contains(mouse)
         if window.ignoresMouseEvents == inside {     // 需要翻转时才动 + 记日志
             window.ignoresMouseEvents = !inside
             petLog("鼠标穿透切换 → \(inside ? "接住鼠标（在角色上）" : "穿透")")

@@ -17,7 +17,8 @@
 
   // 通过 daemon 打开时用同源；file:// 调试时连本地默认端口
   var API = /^https?:$/.test(location.protocol) ? '' : 'http://127.0.0.1:8791';
-  var POLL_MS = 2500;
+  var POLL_MS = 2000;         // 状态：2 秒一次（服务端 /state 实测 30~60ms）
+  var METRICS_MS = 3000;      // 用量：3 秒一次（服务端增量解析后约 20ms）
 
   // Swift 宿主注入的桥；纯浏览器里为 null
   var host = (window.webkit && window.webkit.messageHandlers &&
@@ -82,6 +83,95 @@
   /* ---------------- 状态拉取 ---------------- */
 
   var timer = null;
+  var taskButton = document.getElementById('petTasks');
+  var tokenButton = document.getElementById('petTokens');
+  var costLabel = document.getElementById('petCost');
+  var tasks = [], selectedId = null, lastAgent = {}, today = null, tokenView = 0;
+  var metricsAt = 0, metricsDay = '', metricsBusy = false, metricsLoaded = false;
+  var sourceNames = {workbuddy: 'WB', codex: 'Codex', claude: 'Claude'};
+
+  function showTask() {
+    var selected = tasks.filter(function (t) { return t.id === selectedId; })[0];
+    var agent = selected || lastAgent;
+    anim.setState(effectiveState(agent.state));
+    if (!taskButton) return;
+    taskButton.hidden = !tasks.length;
+    taskButton.textContent = tasks.length + ' 项任务';
+    taskButton.title = selected ? (tasks.indexOf(selected) + 1) + '/' + tasks.length + ' · '
+      + selected.label + '\n' + (selected.task || '暂无任务文字') + '\n' + (selected.cwd || '')
+      + '\n点击切换观察任务' : '点击切换观察任务';
+  }
+
+  if (taskButton) taskButton.addEventListener('click', function () {
+    if (!tasks.length) return;
+    var index = tasks.findIndex(function (t) { return t.id === selectedId; });
+    selectedId = tasks[(index + 1) % tasks.length].id;
+    showTask();
+  });
+
+  function shortNumber(n) {
+    if (n == null) return '—';
+    if (n >= 100000000) return (n / 100000000).toFixed(1) + '亿';
+    if (n >= 10000) return (n / 10000).toFixed(1) + '万';
+    return n.toLocaleString();
+  }
+  function showTokens() {
+    if (!tokenButton) return;
+    if (!today) {
+      // 首次拉取还没回来时不要写「—」：那会看起来像"没数据"，实际只是还在读。
+      tokenButton.textContent = metricsLoaded ? '今日 Token —' : '今日 读取中…';
+      tokenButton.title = metricsLoaded ? '用量暂不可读，正在自动重试' : '正在读取本机用量日志';
+      return;
+    }
+    var names = Object.keys(sourceNames), key = names[tokenView - 1];
+    tokenButton.textContent = tokenView
+      ? sourceNames[key] + ' ' + shortNumber((today.bySource[key] || {}).totalTokens)
+      : '今日 ' + shortNumber(today.totalTokens) + ' Token' + (today.complete ? '' : '*');
+    tokenButton.title = today.dayLocal + ' · ' + today.note + '\n' + names.map(function (name) {
+      var n = (today.bySource[name] || {}).totalTokens;
+      return sourceNames[name] + ': ' + (n == null ? '未统计' : n.toLocaleString() + ' Token');
+    }).join('\n') + '\n点击轮换来源（当前：' + (tokenView ? sourceNames[key] : '全部') + '）';
+  }
+  if (tokenButton) tokenButton.addEventListener('click', function () { tokenView = (tokenView + 1) % 4; showTokens(); });
+  ['petSummary', 'petTokens'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('contextmenu', function (e) { e.stopPropagation(); });
+  });
+  function jsonAt(path) {
+    return fetch(API + path, {cache: 'no-store'}).then(function (r) {
+      if (!r.ok) throw new Error(r.status); return r.json();
+    });
+  }
+  /* 卡片保持自动刷新（状态 2 秒、用量 3 秒），不显示更新时间：
+     用户要求"只要会自己刷新就行"，界面上不多塞字。 */
+  function pollMetrics() {
+    if (!tokenButton && !costLabel) return;
+    var day = new Date().toLocaleDateString();
+    if (metricsBusy || (day === metricsDay && Date.now() - metricsAt < METRICS_MS)) return;
+    metricsBusy = true; metricsAt = Date.now(); metricsDay = day;
+    Promise.all([
+      jsonAt('/usage').then(function (d) {
+        today = d.today || (d.usage || {}).today || null;
+        metricsLoaded = true;
+        showTokens();
+      }).catch(function () { today = null; metricsLoaded = true; showTokens(); }),
+      jsonAt('/claude-cost').then(function (d) {
+        if (!costLabel) return;
+        var valid = d.verified && typeof d.amount === 'number' && isFinite(d.amount);
+        var amount = valid ? (d.currency === 'USD' ? '$' : d.currency + ' ') + d.amount.toFixed(2) : '—';
+        costLabel.textContent = '已花费 ' + amount;
+        var dayAmount = (d.today && d.currency) ? Number(d.today[d.currency]) : null;
+        costLabel.title = [
+          d.note,
+          dayAmount != null && isFinite(dayAmount)
+            ? '今日 $' + dayAmount.toFixed(2) + ' · ' + (d.todayRequests || 0) + ' 次调用' : null,
+          d.requests != null ? '累计 ' + d.requests + ' 次调用' : null,
+          '来源：' + (d.source || '—'),
+          '更新：' + (d.updatedAt || '—')
+        ].filter(Boolean).join('\n');
+      }).catch(function () { if (costLabel) { costLabel.textContent = '已花费 —'; costLabel.title = '费用暂不可读'; } })
+    ]).then(function () { metricsBusy = false; });
+  }
 
   /* ---------------- 睡着时被惊动：起身 + 保持清醒 ----------------
      不做这个的话，点她一下 → 醒一下 → 下一个轮询又把她按回去睡，
@@ -109,8 +199,16 @@
   function poll() {
     fetch(API + '/state', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (s) { anim.setState(effectiveState(((s || {}).agent || {}).state)); })
-      .catch(function () { anim.setState(effectiveState('offline')); });
+      .then(function (s) {
+        lastAgent = (s || {}).agent || {};
+        tasks = Array.isArray(s.tasks) ? s.tasks : [];
+        if (!tasks.some(function (t) { return t.id === selectedId; })) {
+          selectedId = tasks.some(function (t) { return t.id === lastAgent.id; }) ? lastAgent.id : null;
+        }
+        showTask();
+      })
+      .catch(function () { tasks = []; selectedId = null; lastAgent = {state: 'offline'}; showTask(); });
+    pollMetrics();
   }
 
   function startPolling() {

@@ -8,7 +8,8 @@ WorkBuddy Pet —— 本地状态服务（纯 Python 标准库）
 所以换工具不用改运行时，别人也能接自己的。
 
     GET /state     → {"agent": {state, label, task, cwd, ...}, "source": ...}
-    GET /usage     → 用量数据（只有 WorkBuddy 源才有）
+    GET /usage     → 兼容旧月度字段 + 三种工具今日 Token
+    GET /claude-cost → 已核对的本地中转站账单（缺失为 null）
     GET /health    → {"ok": true}
     GET /          → 用量报告.html
     GET /pet.html  → 桌面宠物页面
@@ -39,11 +40,12 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import pet_sources as SRC          # noqa: E402
+import claude_cost as COST
 import usage_stats as US           # noqa: E402
 
 PORT_FILE = os.path.join(HERE, "pet.port")
 DEFAULT_PORT = 8791
-USAGE_TTL = 20.0
+USAGE_TTL = 3.0
 
 _source = None                      # 当前状态源实例（main 里设置）
 
@@ -51,7 +53,7 @@ _source = None                      # 当前状态源实例（main 里设置）
 # ---------------------------------------------------------------- 用量（WorkBuddy 专属）
 
 _usage_lock = threading.Lock()
-_usage_cache = {"ts": 0.0, "data": None}
+_usage_cache = {"ts": 0.0, "day": None, "data": None}
 
 
 def compute_usage():
@@ -61,6 +63,7 @@ def compute_usage():
                if US.is_deepseek(r["model"]) and r["when"] >= start]
     agg = US.aggregate(records)
     return {
+        "today": US.today_usage(now),
         "scope": "%d 年 %d 月" % (now.year, now.month),
         "inputTokens": agg["prompt"], "outputTokens": agg["completion"],
         "totalTokens": agg["total"], "cachedTokens": agg["cached"],
@@ -70,21 +73,19 @@ def compute_usage():
 
 
 def usage_snapshot():
-    """按需计算 + TTL 缓存（不后台预热：守护进程长期驻留，全量扫盘很浪费）。
-
-    非 WorkBuddy 环境下直接返回 None —— 别的工具没有这套记录。
-    """
-    if not os.path.isdir(SRC.PROJECTS_DIR):
-        return None
+    """All tools, cached for 20 seconds; local midnight invalidates immediately."""
+    day = dt.date.today().isoformat()
     with _usage_lock:
-        if _usage_cache["data"] is not None and time.time() - _usage_cache["ts"] < USAGE_TTL:
+        if (_usage_cache["data"] is not None and _usage_cache["day"] == day
+                and time.monotonic() - _usage_cache["ts"] < USAGE_TTL):
             return _usage_cache["data"]
         try:
             data = compute_usage()
         except Exception as exc:
-            data = {"error": str(exc)}
+            data = {"error": "本机用量暂不可读", "today": None}
         _usage_cache["data"] = data
-        _usage_cache["ts"] = time.time()
+        _usage_cache["ts"] = time.monotonic()
+        _usage_cache["day"] = day
         return data
 
 
@@ -109,12 +110,13 @@ def regenerate_report():
         # 载进内存了；之后改了那个文件、服务仍然在跑旧代码 ——
         # 症状是用户点了「重新统计」，页面又变回旧样子
         #（真实踩过：黄底提示条已经删掉，点一次它又回来了）。
-        importlib.reload(US)
-        agg, title, path, _meta = US.generate()
-        _usage_cache["ts"] = 0.0                 # 顺手让 /usage 的缓存失效
+        with _usage_lock:
+            importlib.reload(US)
+            agg, title, path, _meta = US.generate()
+            _usage_cache["ts"] = 0.0                 # 顺手让 /usage 的缓存失效
         return {"ok": True, "generatedAt": int(time.time() * 1000),
                 "totalTokens": agg["total"], "calls": agg["calls"],
-                "title": title, "path": path}
+                "title": title}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
     finally:
@@ -131,12 +133,23 @@ def build_state():
     else:
         agent = _source.snapshot()
         sname, stitle = _source.name, _source.title
+    # AutoSource / WorkBuddySource 在自己的 snapshot() 里顺带刷新了 tasks；
+    # 固定成 Codex 源时仍然单独取一遍 WorkBuddy 的任务列表。
+    tasks = getattr(_source, "tasks", None)
+    if tasks is None:
+        if _source is not None and _source.name != "none":
+            tasks = SRC.WorkBuddySource().tasks_snapshot()
+        else:
+            tasks = []
     return {
         "ok": True,
         "ts": now,
-        "apiVersion": 3,
+        "apiVersion": 5,
+        "tasks": tasks,
+        "activeSessions": len(tasks),
         "source": sname,
         "sourceTitle": stitle,
+        "sources": getattr(_source, "sources", []),
         "agent": agent,
     }
 
@@ -147,7 +160,7 @@ def build_usage():
     if snap is None:
         return {"ok": True, "ts": now, "apiVersion": 1, "usage": None,
                 "note": "当前环境没有用量数据（只有 WorkBuddy 源有）"}
-    return {"ok": True, "ts": now, "apiVersion": 1, "usage": snap}
+    return {"ok": True, "ts": now, "apiVersion": 2, "usage": snap, "today": snap.get("today")}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -160,7 +173,10 @@ class PetHandler(SimpleHTTPRequestHandler):
         pass
 
     def end_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin")
+        if self._local_request() and origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
@@ -172,19 +188,48 @@ class PetHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _local_request(self):
+        # Host check also blocks DNS rebinding. Remote websites must not read
+        # task text or billing data. Opaque/null origins cannot read private APIs.
+        port = self.server.server_address[1]
+        allowed = {"127.0.0.1:%d" % port, "localhost:%d" % port}
+        if self.headers.get("Host") not in allowed:
+            return False
+        origin = self.headers.get("Origin")
+        if origin == "null":
+            # Preserve the existing local HTML report's refresh button only.
+            return urlparse(self.path).path in ("/regenerate", "/api/regenerate")
+        if origin is not None and origin not in {"http://" + h for h in allowed}:
+            return False
+        return self.headers.get("Sec-Fetch-Site") != "cross-site"
+
     def do_GET(self):
+        if not self._local_request():
+            self.send_error(403, "Local requests only")
+            return
         path = urlparse(self.path).path
         if path in ("/state", "/api/state"):
             return self._json(build_state())
         if path in ("/usage", "/api/usage"):
             return self._json(build_usage())
+        if path in ("/claude-cost", "/api/claude-cost"):
+            return self._json(COST.spend_snapshot())
         if path in ("/regenerate", "/api/regenerate"):
             return self._json(regenerate_report())
         if path in ("/health", "/version"):
-            return self._json({"ok": True, "version": "pet-3.0",
+            return self._json({"ok": True, "version": "pet-4.0",
                                "source": _source.name if _source else None})
         if path == "/":
             self.path = "/" + "用量报告.html"
+        allowed = {"/pet.html", "/用量报告.html", "/pet-runtime.test.html",
+                   "/pet-bridge.test.html", "/pet-wake.test.html", "/pet-metrics.test.html"}
+        from urllib.parse import unquote
+        clean = unquote(urlparse(self.path).path)
+        segments = clean.split("/")
+        asset = clean.startswith(("/web/", "/assets/pet/")) and clean.endswith((".js", ".css", ".png", ".json"))
+        if any(part.startswith(".") for part in segments if part) or not (clean in allowed or asset):
+            self.send_error(404)
+            return
         return super().do_GET()
 
 
@@ -216,6 +261,9 @@ def serve(port, open_browser):
     print("  页面:   %s" % url)
     print("  状态:   %sstate" % url)
     print("  按 Ctrl+C 停止")
+    # 先把用量解析缓存焐热：冷启动要扫一遍全部日志（本机约 5 秒），
+    # 不预热的话宠物打开后的第一屏会长时间停在「—」。
+    threading.Thread(target=usage_snapshot, daemon=True).start()
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

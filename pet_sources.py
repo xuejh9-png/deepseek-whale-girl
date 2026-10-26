@@ -138,7 +138,7 @@ class WorkBuddySource(BaseSource):
             except Exception:
                 continue
             hb = d.get("lastHeartbeat") or 0
-            if hb and now - hb < 60000:
+            if isinstance(hb, (int, float)) and 0 <= now - hb < SLEEP_MS and d.get("sessionId"):
                 out.append(d)
         return out
 
@@ -162,32 +162,6 @@ class WorkBuddySource(BaseSource):
             except ValueError:
                 continue
         return recs[-limit:]
-
-    def _latest_session(self):
-        cands = []
-        for p in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
-            try:
-                cands.append((os.path.getmtime(p), p))
-            except OSError:
-                pass
-        if not cands:
-            return None, []
-        cands.sort(reverse=True)
-        if time.time() - cands[0][0] < 5:
-            return cands[0][1], self._read_tail(cands[0][1])
-        best_p, best_recs, best_ts = cands[0][1], [], 0
-        for _, p in cands[:4]:
-            recs = self._read_tail(p, 50)
-            ts = 0
-            for r in reversed(recs):
-                if r.get("timestamp"):
-                    ts = r["timestamp"]
-                    break
-            if ts > best_ts:
-                best_p, best_recs, best_ts = p, recs, ts
-        if not best_recs:
-            best_recs = self._read_tail(best_p)
-        return best_p, best_recs
 
     def _scan_last_prompt(self, path, max_bytes=8_000_000):
         if not path:
@@ -225,14 +199,47 @@ class WorkBuddySource(BaseSource):
                 best = got
         return best[:140] if best else None
 
-    def snapshot(self):
+    def tasks_snapshot(self):
         now = now_ms()
-        if not self._active_sessions(now):
-            return blank("offline", **{"source": self.name})
-        path, recs = self._latest_session()
-        if not path:
-            return blank("idle", source=self.name)
+        paths = {}
+        for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+            paths.setdefault(os.path.basename(path)[:-6], []).append(path)
+        active = {}
+        for session in self._active_sessions(now):
+            sid = session["sessionId"]
+            if not isinstance(sid, str):
+                continue
+            if sid not in active or session["lastHeartbeat"] > active[sid]["lastHeartbeat"]:
+                active[sid] = session
+        tasks = []
+        for sid, session in sorted(active.items()):
+            matches = paths.get(sid, [])
+            # Never pair a fresh heartbeat with another task's latest file.
+            # Missing/renamed/ambiguous files disappear until identity is valid.
+            if len(matches) != 1:
+                continue
+            recs = self._read_tail(matches[0])
+            if not recs:
+                continue
+            task = self._session_snapshot(matches[0], recs, session, now)
+            task.update(id="workbuddy:" + sid, heartbeatFresh=True,
+                        lastHeartbeat=session["lastHeartbeat"])
+            tasks.append(task)
+        for task in tasks:
+            task["activeSessions"] = len(tasks)
+        return tasks
 
+    def snapshot(self):
+        tasks = self.tasks_snapshot()
+        self.tasks = tasks
+        if not tasks:
+            return blank("offline", source=self.name)
+        # Completion of one session must not mask another executing session.
+        priority = {"working": 0, "thinking": 1, "error": 2, "waiting": 3,
+                    "success": 4, "idle": 5, "sleeping": 6}
+        return min(tasks, key=lambda t: (priority.get(t["state"], 9), t["id"]))
+
+    def _session_snapshot(self, path, recs, session, now):
         state, rec = "idle", {}
         newest_ts = 0
         for r in reversed(recs):
@@ -275,23 +282,15 @@ class WorkBuddySource(BaseSource):
                 rec = r
                 break
 
-        sessions = self._active_sessions(now)
-        cur = None
-        for s in sessions:
-            if path and s.get("sessionId") and s["sessionId"] in path:
-                cur = s
-                break
-        if cur is None and sessions:
-            cur = sessions[0]
-
         la = (rec or {}).get("timestamp") or newest_ts
         state = _sleep_if_quiet(state, la, now)
         return blank(state,
                      task=self._scan_last_prompt(path),
-                     cwd=(cur or {}).get("cwd"),
-                     sessionId=(cur or {}).get("sessionId"),
+                     cwd=session.get("cwd"),
+                     sessionId=session.get("sessionId"),
                      lastActivity=la,
-                     activeSessions=len(sessions),
+                     lastHeartbeat=session.get("lastHeartbeat"),
+                     activeSessions=1,
                      source=self.name)
 
 
@@ -463,6 +462,65 @@ class CodexSource(BaseSource):
                      source=self.name)
 
 
+# ---------------------------------------------------------------- 自动跟随
+
+class AutoSource(BaseSource):
+    """每次请求都重新比较各工具，挑「此刻真的在动」的那个。
+
+    为什么不能只在启动时选一次：原来的 auto 在进程启动那一刻按快照打分，
+    选中 Codex 之后就一直读 Codex。用户明明在用 WorkBuddy，宠物却永远显示
+    Codex 那边的「睡着啦」——卡片就变成了死的（用户实测截图确认）。
+    所以选择必须放进每次 snapshot()，而不是进程生命周期。
+    """
+
+    name = "auto"
+    title = "自动跟随当前活动的工具"
+
+    ACTIVE = ("working", "thinking", "error", "waiting")
+    RANK = {"working": 0, "thinking": 1, "error": 2, "waiting": 3,
+            "success": 4, "idle": 5, "sleeping": 6, "offline": 7}
+
+    def __init__(self):
+        self._sources = [WorkBuddySource(), CodexSource()]
+        self.tasks = []
+        self.sources = []
+
+    def available(self):
+        return any(s.available() for s in self._sources)
+
+    def snapshot(self):
+        cands = []
+        for src in self._sources:
+            try:
+                if not src.available():
+                    continue
+                snap = src.snapshot()
+            except Exception:
+                continue
+            if src.name == "workbuddy":
+                # 任务列表永远来自 WorkBuddy；动画状态才由下面的比较决定。
+                self.tasks = getattr(src, "tasks", [])
+            cands.append((src, snap))
+        self.sources = [{"name": s.name, "state": d.get("state"),
+                         "lastActivity": d.get("lastActivity")} for s, d in cands]
+        if not cands:
+            self.tasks = []
+            return blank("offline", source=self.name)
+        return min(cands, key=self._key)[1]
+
+    @classmethod
+    def _key(cls, pair):
+        src, snap = pair
+        state = snap.get("state")
+        active = 1 if state in cls.ACTIVE else 0
+        # WorkBuddy 有心跳文件，比日志时间更能代表「这个会话还开着」；
+        # Codex 没有心跳，只能看最后一条事件。
+        fresh = max(snap.get("lastActivity") or 0, snap.get("lastHeartbeat") or 0)
+        # 先看谁在动，再看谁最后动过，最后才按状态语义；同分时 WorkBuddy 优先。
+        return (-active, -fresh, cls.RANK.get(state, 9),
+                0 if src.name == "workbuddy" else 1)
+
+
 # ---------------------------------------------------------------- 工具函数
 
 NOISE = ("background command", "system-reminder", "completed", "call_")
@@ -503,27 +561,13 @@ REGISTRY = {
 def pick(name="auto"):
     """返回一个状态源实例。
 
-    auto：优先挑「此刻真的有活动」的那个；都没有就用 none（宠物自己做 idle）。
+    auto：返回 AutoSource —— **每次请求**都比较各工具，跟随此刻活动的那个。
+    其余名字返回固定源；都没有就用 none（宠物自己做 idle）。
     """
     name = (name or "auto").lower()
     if name in REGISTRY:
         return REGISTRY[name]()
-    # auto
-    best, best_score = None, -1
-    for key in ("workbuddy", "codex"):
-        try:
-            s = REGISTRY[key]()
-            if not s.available():
-                continue
-            snap = s.snapshot()
-            st = snap.get("state")
-            score = 2 if st in ("working", "thinking", "success", "error", "waiting") else \
-                    1 if st == "idle" else 0
-            if score > best_score:
-                best, best_score = s, score
-        except Exception:
-            continue
-    return best or NullSource()
+    return AutoSource()
 
 
 def describe():

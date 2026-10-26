@@ -1,0 +1,53 @@
+<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>pet-metrics-selftest</title>
+<link rel="stylesheet" href="web/pet.css"></head><body>
+<div class="pet" id="pet"><div class="pet-body" id="petBody"><div class="pet-inner"><div class="pet-sprite" id="petSprite"></div></div></div>
+<div class="pet-summary" id="petSummary"><span id="petCost">已花费 —</span><button id="petTasks" hidden></button></div>
+<div class="pet-meter"><button id="petTokens">今日 读取中…</button></div></div>
+<script src="assets/pet/manifest.js"></script>
+<script>
+// Synthetic, offline fixtures. No real sessions, credentials, money or network.
+window.__sent=[];window.webkit={messageHandlers:{petHost:{postMessage:function(m){window.__sent.push(m.cmd);}}}};
+window.__tasks=[{id:'a',state:'working',label:'执行中',task:'演示任务 A'},
+{id:'b',state:'thinking',label:'思考中',task:'演示任务 B'},
+{id:'c',state:'waiting',label:'等你回复',task:'演示任务 C'}];
+window.__state={agent:__tasks[0],tasks:__tasks};window.__usageCalls=0;window.__offline=false;window.__usageTotal=123456;
+window.fetch=function(url){
+ if(__offline)return Promise.reject(new Error('offline'));
+ var data;
+ if(url.endsWith('/state'))data=__state;
+ else if(url.endsWith('/usage')){__usageCalls++;data={today:{totalTokens:__usageTotal,complete:false,
+ note:'仅统计已接入来源',dayLocal:'2026-10-26',updatedAt:new Date().toISOString(),bySource:{workbuddy:{totalTokens:120000},codex:{totalTokens:3456},claude:{totalTokens:null}}}};}
+ else data={amount:null,verified:false,note:'未接入真实账单'};
+ return Promise.resolve({ok:true,json:function(){return Promise.resolve(data);}});
+};
+</script><script src="web/pet-runtime.js"></script><script src="web/pet.js"></script>
+<script>
+(async function(){
+ var passed=0,fail=[];function check(name,condition){if(condition)passed++;else fail.push(name);}
+ function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
+ function el(id){return document.getElementById(id);}function text(id){return el(id).textContent;}
+ await sleep(400);
+ check('unknown money',text('petCost')==='已花费 —');
+ check('three tasks',text('petTasks')==='3 项任务');
+ check('no state chip',!el('petTaskState'));
+ check('no timestamp',!el('petUpdated'));
+ check('all-tool total by default',text('petTokens')==='今日 12.3万 Token*'&&el('petTokens').title.includes('仅统计已接入来源'));
+ el('petTasks').click();check('second task',el('petTasks').title.includes('2/3 · 思考中'));
+ el('petTasks').click();check('third task',el('petTasks').title.includes('3/3 · 等你回复'));
+ el('petTasks').click();check('first task',el('petTasks').title.includes('1/3 · 执行中'));
+ check('no drag or reset',!__sent.some(function(c){return ['dragBegin','reset','menu','clicked'].includes(c);}));
+ __tasks[0]={id:'a',state:'success',label:'刚完成'};__state={agent:__tasks[1],tasks:__tasks};
+ await sleep(2700);check('completion retains tasks',text('petTasks')==='3 项任务');
+ __state={agent:__tasks[1],tasks:__tasks.slice(1)};
+ await sleep(2700);check('expired task fallback',el('petTasks').title.includes('1/2 · 思考中'));
+ el('petTokens').click();check('workbuddy source',text('petTokens')==='WB 12.0万');
+ el('petTokens').click();check('codex source',text('petTokens')==='Codex 3,456');
+ el('petTokens').click();check('missing claude unknown',text('petTokens')==='Claude —');
+ el('petTokens').click();check('back to total',text('petTokens')==='今日 12.3万 Token*');
+ check('usage refreshes',__usageCalls>=2);
+ __usageTotal=210000;await sleep(3300);check('auto refresh without click',text('petTokens')==='今日 21.0万 Token*');
+ __offline=true;await sleep(3300);check('offline clears stale tasks',el('petTasks').hidden);
+ check('animation survives',Number(el('pet').dataset.ticks)>0);
+ document.title='RESULT|PASS='+passed+'|FAIL='+fail.length+'|'+(fail.length?fail.join('|'):'ALL_OK');
+})();
+</script></body></html>

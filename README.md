@@ -1,8 +1,9 @@
-# WorkBuddy Token 用量面板 + 桌面宠物
+# Token 面板 + 桌面宠物
 
 两个本地小工具，都从一个数据源出发：**WorkBuddy 的本地会话记录**。
 
-1. **用量面板** —— 把 WorkBuddy 里消耗的 token 统计出来，生成一个网页报告
+1. **用量面板** —— 把 **DeepSeek（WorkBuddy）+ ChatGPT（桌面版）**消耗的 token 统计出来，
+   生成一个网页报告，柱状图按来源分色
 2. **桌面宠物** —— 一只用透明窗口浮在桌面上的小鲸鱼娘，会**看着你干活**：
    你让她工作时她坐着敲电脑、思考时歪头、任务完成时跳起来、没动静了会睡着
 
@@ -14,6 +15,10 @@
 
 > 顺带说明：**这不是 WorkBuddy 官方功能**，是一个独立的本地小工具，
 > 只读 WorkBuddy 写在磁盘上的记录文件，不改它、也不联网。
+>
+> 命名说明：ChatGPT 桌面版的数据目录是 `~/.codex`，所以代码里沿用了 `codex`
+> 这个名字（`CodexSource`、`--source codex`、`SRC_CODEX`）；
+> **页面上统一显示为 ChatGPT**，跟目录名脱钩，避免看的人以为装了两个东西。
 
 ---
 
@@ -21,7 +26,7 @@
 
 | 想干什么 | 怎么做 |
 |---|---|
-| 看这个月用了多少 token | 双击 **`查看用量.command`**（或 `python3 usage_stats.py --open`） |
+| 看一共用了多少 token（DeepSeek + ChatGPT） | 双击 **`查看用量.command`**（或 `python3 usage_stats.py --open`） |
 | 让鲸鱼娘浮在桌面上 | 双击 **`启动桌面宠物.command`** —— 首次会自动编译窗口，约 10 秒 |
 | 只想看看她的动画 | 双击 **`pet.html`** —— 不用装任何东西，也不需要 WorkBuddy |
 
@@ -32,11 +37,13 @@
 
 ## 它解决什么问题
 
-WorkBuddy 客户端**只显示积分（credits），不显示 token 数**。
-但你想知道"这个月到底用了多少 token"的时候，客户端答不了。
+WorkBuddy 客户端**只显示积分（credits），不显示 token 数**；
+ChatGPT 桌面版那边也只有额度进度条，看不到具体 token。
+但你想知道"一共用了多少 token"的时候，两边都答不了。
 
 好在这件事的原始数据一直在本地：每次 LLM 调用的 token 明细，
-都写在 `~/.workbuddy/projects/<项目>/<会话>.jsonl` 里。
+分别写在 `~/.workbuddy/projects/<项目>/<会话>.jsonl` 和
+`~/.codex/sessions/**/rollout-*.jsonl` 里。
 所以完全可以自己算出来 —— 这个项目就是把这件事做成能看的东西。
 
 ---
@@ -46,21 +53,74 @@ WorkBuddy 客户端**只显示积分（credits），不显示 token 数**。
 > 面板截图就不放了 —— 它上面是真实用量数字，公开仓库里没必要晒。
 > 你自己双击根目录的 `查看用量.command` 就能看到。
 
+面板统计**两个来源**，柱状图按来源分色堆叠：
+
+| 来源 | 读哪里 | 颜色 |
+|---|---|---|
+| DeepSeek（WorkBuddy） | `~/.workbuddy/projects/<项目>/<会话>.jsonl` | 蓝 `#2b6cff` |
+| ChatGPT（桌面版） | `~/.codex/sessions/<年>/<月>/<日>/rollout-*.jsonl` | 紫 `#7c3aed` |
+
+### 日期范围管的是整页
+
+页头那个按钮点开是**日历，自己点起始日和结束日**（也带「近 7 天 / 近 30 天 /
+本月 / 全部」四个预设）。没有数据的日子是灰的，点不动。
+
+范围一选，**整页的数字都跟着变** —— 卡片、按来源、按模型、按天明细、按项目、
+会话排行，全部重算。想看"9 月上半月花了多少、哪个会话最烧"，圈一下就行。
+
+选好的范围会写进地址栏的 `#` 里，所以点「重新统计」（它会重载页面）之后
+不会打回"全部"。关掉页面重新双击打开时又回到"全部"——那才是干净的默认值。
+
+### 「工作日」开关
+
+预设那一排最后有个 **工作日** 开关，打开后只统计工作日，可以和范围叠加
+（比如「本月 + 工作日」）。它按**国务院办公厅的放假安排**算，不是简单地
+跳过周末：
+
+- 法定假日不算（2026 年中秋 9/25–9/27、国庆 10/1–10/7）
+- **调休上班的周末算工作日**（2026 年 9/20 周日、10/10 周六上班）
+
+打开之后**哪些天被算进去是看得见的**：按钮上直接写"全部 33 天 · 工作日 20 天"，
+日历里不计入的日子会被划掉（9/25 周五会划掉、9/20 周日不会）。
+
+假期表在 `usage_stats.py` 顶部的 `HOLIDAYS_2026` / `MAKEUP_WORKDAYS`，
+已逐条与国办通知中标注的星期核对过。**每年 11 月左右会发下一年度的通知，
+到期要手工补**；没补之前当年会退化成"周一~周五算工作日"。
+
+「连续天数」是按**自然日**算相邻的，不是按筛出来的行——所以开了工作日之后
+周一到周五算连续，跨周末不算。
+
+为什么能做到秒变：报告生成时会把**足够细的数据包**内联进页面
+（每天每来源的 token / 调用 / 输入 / 输出，模型、项目、会话的按天稀疏表，
+以及已经切好的连续对话分段），换范围是纯前端重算 —— 不联网、不依赖本地服务，
+双击 html 打开就能用。整包 20KB 出头。
+
+柱顶的数字**只在放得下的时候才标**（比如一周 7 根）。33 天那种密度下每列只有
+22.7px，而「9454万」这种标签要 36px —— 放不下就一个都不标，
+**不抽稀（看着像漏数据）、也不竖排（得歪着脖子看）**。
+密集的时候要看准确数字：**点那根柱子**，图下面会出一条横着的读数
+（日期 / 合计 / 各来源拆分明细 / 调用次数），再点一下取消。鼠标悬停也能看。
+放不放得下是按**实测字宽**判断的，不是写死的列数阈值。
+
+图表的量程按**当前范围自己的峰值**换算，所以圈到一周时小柱子也看得清；
+量程写在左下角，极小被抬到 4px 的柱子也会标出来，不会让你对着柱子猜大小。
+
 ```bash
-python3 usage_stats.py              # 本月（默认只统计 DeepSeek）
-python3 usage_stats.py --all        # 全部历史
-python3 usage_stats.py --days 7     # 最近 7 天
-python3 usage_stats.py --all-models # 不过滤模型
-python3 usage_stats.py --open       # 生成后自动打开
+python3 usage_stats.py                    # 全部历史（默认，两个来源都算）
+python3 usage_stats.py --month 2026-10    # 只看某个月
+python3 usage_stats.py --days 7           # 最近 7 天
+python3 usage_stats.py --since 2026-09-01 # 从某天起
+python3 usage_stats.py --source codex     # 只看某一个来源（可重复给）
+python3 usage_stats.py --open             # 生成后自动打开
 ```
 
 macOS 上也可以**双击 `查看用量.command`**。
 
 ### 口径
 
-`累计 Token = sum(total_tokens) = 输入 + 输出`，和 OpenAI / Codex 一致。
+`累计 Token = sum(total_tokens) = 输入 + 输出`，和两边的接口账单口径一致。
 
-这个口径是**对照 Codex 本地记录验证过**的：
+这个口径是**对照 ChatGPT 本地记录验证过**的：
 
 ```json
 // ~/.codex/sessions/**/rollout-*.jsonl 里的 token_usage_record
@@ -69,6 +129,82 @@ macOS 上也可以**双击 `查看用量.command`**。
 ```
 
 所以两边算出来的数字**可以直接横向比**。
+
+两个来源各有一个坑，代码里都处理了：
+
+- **ChatGPT**：一个会话被「续写」会新开一个 rollout 文件并**整段重放历史**，
+  必须按 `response_id` 去重，否则同一个响应被计两次。
+- **WorkBuddy**：按 `(时间戳, 输入, 输出, 模型)` 四元组防重放。
+
+另外「最长连续对话」不是会话首尾时差 —— 那样 ChatGPT 的续写会话能算出 8 天来。
+现在是按空档切段：**断开超过 2 小时就不算同一段**。
+
+---
+
+## 本次升级：费用、今日 Token 与多任务
+
+桌宠保留原来的 160×200 窗口、单只角色和手势。顶部显示 **已花费** 与任务数，底部显示**今日全部工具的 Token**。
+已花费用立绘本身的配色（暖白底 + 深蓝字），和角色同色系，不再用近黑实块。
+
+- **点任务数**：循环观察各 WorkBuddy 任务。悬停任务按钮可查看任务文字和项目。
+- **点今日 Token**：默认是 WorkBuddy / Codex / Claude Code 三来源合计；点一下轮换单来源，悬停显示精确数字。`*` 表示“仅统计已接入来源”。
+- **已花费 = Claude Code 的本机消费**：按 `~/.cc-switch/model-pricing.json` 的模型单价折算
+  （输入、输出、缓存读、缓存写四条分量分别计价），与 CC Switch「用量统计」面板**同一批日志、
+  同一张价目表**。本机实测两者请求数、token 总数、金额逐项一致（金额差小于 1 美分，四舍五入）。
+  导入过核对过的中转站账单时，以账单为准。
+- **自带刷新，不显示时间戳**：状态每 2 秒、用量每 3 秒重算一次。用量侧按文件
+  `mtime + size` 增量解析（全量扫描 3.5 秒 → 命中缓存约 20 毫秒），所以高频刷新不会烧 CPU。
+  页面隐藏时暂停轮询，回到前台立即续上。
+- 统计按本机自然日；午夜立即失效重算。
+
+数据接口：`/state` 保留 `agent`，增加 `tasks` 与 `activeSessions`；`/usage` 保留原月度
+DeepSeek 字段，在顶层及 `usage.today` 返回三来源今日统计；`/claude-cost` 返回金额、币种、
+验证状态、覆盖起止和更新时间。账单/任务接口只允许同源本机读取，拒绝外站和不透明 Origin。
+双击本地 HTML 的报告“重新统计”仍兼容；桌宠使用本地服务页面时才能读取私有数据。
+
+**Codex 的两套累计账本不能混算**：优先按 `response_id` 统计单次用量；只在该轮没有单次记录时，
+对 `token_count.info.total_token_usage` 独立差分补充。绝不把它与 `thread_token_usage` 交替做差。
+Claude Code 按 message/request ID 去重，同一流式消息取各用量字段的最大值，缓存创建、读取各计一次；
+`<synthetic>` 等非 Claude 模型不计入。今日统计受本机可读日志的覆盖范围限制。
+
+### 中转站账单导入（离线）
+
+尚未接入已核实的在线账单 API。提供一个标准化 JSON 导入层，由中转站的真实导出映射得到，
+**不能手填估算值**。原始账单及标准化账单都放在仓库之外；默认私有存储为
+`~/.local/share/workbuddy-pet/claude-ledger.json`，权限 `0600`。
+
+```bash
+python3 claude_cost.py import /path/outside/repo/relay-export.json
+python3 claude_cost.py status
+python3 claude_cost.py export /path/outside/repo/normalized-export.json
+```
+
+标准化格式示例（下列全为合成数据）：
+
+```json
+{
+  "schemaVersion": 1,
+  "coverageStart": "2026-01-01T00:00:00+08:00",
+  "coverageEnd": "2026-10-26T10:00:00+08:00",
+  "exportedAt": "2026-10-26T10:01:00+08:00",
+  "fullHistory": true,
+  "billedTotals": {"USD": "0.22"},
+  "entries": [{"requestId": "synthetic-request-1", "model": "claude-sonnet-4",
+    "timestamp": "2026-10-26T09:00:00+08:00", "currency": "USD", "billedAmount": "0.22"}]
+}
+```
+
+`billedTotals` 是该导出所有模型、各币种的真实账单总额，去重后必须逐币种核对一致。
+`fullHistory` 只能在导出确实覆盖完整历史时设为 true；导入器核对明细总额，无法独立证明中转站
+是否漏导了历史。不同币种分别列出，不自动相加或换汇。重复请求 ID 去重，有冲突则拒绝；
+重试请求用不同 ID，失败请求以实际扣费为准。退款/调整项使用独立 `entryId`、`kind: "adjustment"`
+及带符号的 `billedAmount`。无请求 ID 的普通费用使用时间、模型、金额和用量等稳定组合键。
+
+导入只保留白名单字段，丢弃账户、密钥、正文等额外字段，请求 ID 哈希后存储。
+每次原子替换完整导出，不追加重叠的时间窗口。费用详情的覆盖范围和更新时间可悬停查看。
+
+新增回归：`python3 -m unittest -v test_usage`；浏览器打开 `pet-metrics.test.html` 验证任务轮换、
+缺失数据、缓存和手势隔离。完整验证记录见 [本次验证](docs/issue-1-validation.md)。
 
 ---
 
@@ -142,7 +278,7 @@ open desktop/WorkBuddyPet.app
 | 歪头思考 | 模型正在推理 |
 | 坐着敲电脑 | 正在调用工具 / 执行任务 |
 | 跳起来 + 小星星 | 任务完成 |
-| 楞住 + 头顶 `!` | 出错了（**只有 Codex 源能给出这个信号**，见下）|
+| 楞住 + 头顶 `!` | 出错了（**只有 ChatGPT 源能给出这个信号**，见下）|
 | 睡着了 | 安静够久（默认 1 分钟）|
 | 被拖起悬空 | 你正在拖她 |
 | 跑步 | 菜单点「跑回初始位置」时 |
@@ -166,7 +302,7 @@ open desktop/WorkBuddyPet.app
 实测审计结果（**这曾是真实缺陷**：`sleeping` 写了状态表、标签表和剪辑映射，
 但没有任何适配器会产出它 —— 所以 sleep 素材交付了很久却从没播过）：
 
-| 状态 | WorkBuddy 源 | Codex 源 |
+| 状态 | WorkBuddy 源 | ChatGPT 源 |
 |---|---|---|
 | idle / thinking / working / success / sleeping | ✅ | ✅ |
 | waiting（等你回复） | ✅ | ❌ |
@@ -207,9 +343,16 @@ reasoning / message / file-history-snapshot`，**没有错误类型记录**，
 
 ```bash
 python3 pet_daemon.py --list          # 看本机哪些可用
-python3 pet_daemon.py                 # auto：挑此刻真的有活动的那个
+python3 pet_daemon.py                 # auto：每次请求都比较各工具，跟随此刻活动的那个
 python3 pet_daemon.py --source none   # 独立模式
 ```
+
+**`auto` 是「每次请求重新比较」，不是启动时选一次。**
+旧实现只在进程启动那一刻打分，选中 Codex 后就一直读 Codex —— 用户明明在用
+WorkBuddy，宠物却永远显示 Codex 那边的“睡着啦”，整张卡就是死的。
+现在 `AutoSource` 每次 `/state` 都会同时取两边快照，按
+「谁在干活 → 谁最后动过（WorkBuddy 用心跳时间，Codex 用最后事件）→ 状态语义」
+排序，同分时 WorkBuddy 优先；`/state` 的 `sources` 字段会带上两边的状态，便于核对。
 
 **接自己的工具**：在 `pet_sources.py` 里加一个类，实现 `snapshot()` 返回上面的
 `agent` 结构即可 —— 运行时、窗口、动画一行都不用改。
@@ -349,12 +492,12 @@ desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-save
   3. **时间分辨率不够会"僵硬"**：每步 4 拍（每帧停 91ms）偏卡；
      改成每步 6 拍（每帧 62ms）顺很多，且步频不变。
 - **`error`（出错）状态在 WorkBuddy 源下永远不会出现** —— WorkBuddy 的会话记录里
-  没有错误类型的记录，推不出来。Codex 源能给出（`turn_aborted`）。
+  没有错误类型的记录，推不出来。ChatGPT 源能给出（`turn_aborted`）。
   所以头顶那个 `!` 在 WorkBuddy 下看不到，属**已知限制**，不是坏了。
 - `error` 剪辑的 12 帧里实际只有约 6 个不同姿态（前 3 帧完全相同），
   反应感偏弱，待返工
 - 宠物只支持 macOS（窗口宿主用了 Cocoa + WKWebView）
-- `用量面板` 目前只统计 DeepSeek 系列
+- 中转站在线账单尚未接入，费用需导入真实导出；缺失时显示 `—`。
 
 > 关于验收：`verify-assets.py` 会同时回答两个问题 ——
 > **「有没有变」**（原画布上数变化的像素个数）和 **「看不看得见」**
