@@ -217,7 +217,7 @@ python3 claude_cost.py export /path/outside/repo/normalized-export.json
 ```
 
 - 透明、无边框、置顶的小窗口，**角色以外的区域会穿透鼠标** —— 不挡你操作
-- 拖她可以移动位置；**按住不动 0.8 秒**或**右键**唤出菜单
+- 拖她可以移动位置；**按住不动 0.8 秒**唤出菜单；**双击 / 右键**归位
 - **⌥⌘Q**（Option+Command+Q）退出
 - 默认**只看到她**，没有卡片、没有数字面板
 
@@ -229,11 +229,12 @@ python3 claude_cost.py export /path/outside/repo/normalized-export.json
 |---|---|
 | 退出桌面宠物 | 等同 ⌥⌘Q |
 
-跑动/复位**不在菜单里**（"放在菜单里看起来很呆"），改成直接手势：
+归位**不在菜单里**（"放在菜单里看起来很呆"），改成直接手势。
+归位是**瞬时到位**：不再播放跑动动画，点一下她直接出现在默认位：
 
 | 操作 | 效果 |
 |---|---|
-| **双击她** | 复位 —— 跑回初始位置 |
+| **双击她** | 归位 —— 直接回到默认位 |
 | **右键点她** | 同上（不依赖右键菜单）|
 | **⌥⌘H** | 同上（键盘兜底，不经过鼠标判定）|
 | **长按 0.8 秒** | 唤出菜单（只剩「退出」）|
@@ -251,7 +252,7 @@ python3 claude_cost.py export /path/outside/repo/normalized-export.json
 ### 不用 WorkBuddy 也能跑
 
 宠物本体**不依赖 WorkBuddy**。克隆下来直接双击 `pet.html` 就能看到一只
-会呼吸、眨眼、摆尾的鲸鱼娘（10 个动作全都可用，不是只有待机）。
+会呼吸、眨眼、摆尾的鲸鱼娘（9 个动作全都可用，不是只有待机）。
 
 想要**桌面宠物**（浮在桌面上，而不是留在浏览器标签里）就编译窗口宿主：
 
@@ -283,7 +284,6 @@ open desktop/WorkBuddyPet.app
 | 楞住 + 头顶 `!` | 出错了（**只有 ChatGPT 源能给出这个信号**，见下）|
 | 睡着了 | 安静够久（默认 1 分钟）|
 | 被拖起悬空 | 你正在拖她 |
-| 跑步 | 菜单点「跑回初始位置」时 |
 
 **从 Agent 最后一条记录算起，她的一分钟是这样走的：**
 
@@ -363,12 +363,12 @@ WorkBuddy，宠物却永远显示 Codex 那边的“睡着啦”，整张卡就�
 
 ### 支持的状态与动作
 
-10 个动画剪辑，各自是 6 列行优先的透明 Sprite Sheet：
+9 个动画剪辑，各自是 6 列行优先的透明 Sprite Sheet
+（`run` 已于 2026-10-26 从清单移除，素材仍在磁盘上）：
 
 | 剪辑 | 帧 | 类型 |
 |---|---|---|
 | `idle` | 20 | 循环（含呼吸、眨眼、摆尾） |
-| `run` | 12 | 循环（两步跑步周期） |
 | `jump` | 14 | 一次性（含落地压缩） |
 | `click` | 8 | 一次性 |
 | `drag` | 12 | 开场 4 帧 + 循环 8 帧 |
@@ -396,7 +396,7 @@ verify-assets.py        素材逐帧验收（几何 / 循环接缝 / 透明度 /
 make-sprite-sheet.py    单姿势图 → 精灵图（抠背景 + 全局统一缩放 + 对齐接地线）★尺寸一致性的保证
 intake-assets.py        素材接收：扫桌面&下载的交付包 → 验收 → 通过才安装（默认只新增不覆盖）
 build-manifest-js.py    manifest.json → manifest.js（让 file:// 也能读到）
-pet-runtime.test.html   动画运行时回归测试（35 项）
+pet-runtime.test.html   动画运行时回归测试（30 项）
 pet-bridge.test.html    宿主 ↔ 网页 桥的回归测试（21 项）
 pet-wake.test.html      睡着→点醒→起身→再睡 的交互回归（11 项）
 pet_sources.test.py     状态推断回归测试（32 项）
@@ -432,9 +432,9 @@ python3 intake-assets.py --accept run       # 声明"run 是返工升级、允�
 窗口宿主（Swift）那边另有两项自检，不需要用鼠标点菜单就能验：
 
 ```bash
-desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-runhome
-#   挪开一段距离再跑回初始位置，打印轨迹后退出
-#   期望：monotonic=Y landed=Y yOK=Y BAD=0
+desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-home
+#   先把窗口挪开，再调一次归位，断言落点就是默认位后退出
+#   期望：landed=Y BAD=0
 
 desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-save
 #   写入一次当前位置并退出，用于验证「程序自己写、程序自己读」的位置记忆
@@ -472,7 +472,10 @@ desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-save
 
 ## 已知问题
 
-- **`run`（跑步）已用 AI 图生图重做，12 帧版上线。** 逐项对比：
+- **`run`（跑步）已于 2026-10-26 下线。** 用户要求"不要出现这个动作，化繁为简"，
+  已从清单和宿主逻辑里整段删除；`assets/pet/run.png` 与 `assets/run-12-final/` 保留在磁盘上，
+  要恢复只需在 `manifest.json` 加回 `clips.run` 再跑 `build-manifest-js.py`
+  （见 `docs/2026-10-26-移除跑步动作.md`）。素材本身的质量档案如下：
 
   | 指标 | 第一版（外包） | 第二版（外包返工） | **现役（AI 生成 + 合成）** | 目标 |
   |---|---|---|---|---|

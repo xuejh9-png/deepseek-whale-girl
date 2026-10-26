@@ -4,11 +4,11 @@
 </head><body>
 
 <!-- 宿主 ↔ 网页 桥的回归测试。
-     这一层是**跨进程契约**（Swift 用 evaluateJavaScript 调 window.petHostEvent，
-     网页用 postMessage 发指令给宿主），平时完全没有覆盖，最容易在改一边时悄悄断掉。
+     这一层是**跨进程契约**（网页用 postMessage 发指令给宿主），
+     平时完全没有覆盖，最容易在改一边时悄悄断掉。
 
      做法：装一个**假宿主**（window.webkit.messageHandlers.petHost）拦截所有发出去的指令，
-     于是"右键是否真的发了 menu""双击是否发了 menu"这种问题可以断言，不用靠手点。
+     于是"右键是否真的发了 menu""双击是否发了 reset"这种问题可以断言，不用靠手点。
 
      用真实 manifest（manifest.js）+ 真实 pet.js；断言的是**发出去的指令**和**渲染结果**。
      双击本文件即可跑（不需要 daemon），结果写在 document.title。 -->
@@ -47,7 +47,6 @@ window.fetch = function () { return Promise.reject(new Error('offline')); };
   var root = document.getElementById('pet');
   var body = document.getElementById('petBody');
   var sprite = document.getElementById('petSprite');
-  function flip() { return root.style.getPropertyValue('--pet-flip'); }
   function sheet() { return sprite.style.backgroundImage || ''; }
   function cmds() { return window.__sent.map(function (m) { return m.cmd; }); }
   function lastCmd() { var c = cmds(); return c.length ? c[c.length - 1] : ''; }
@@ -62,37 +61,17 @@ window.fetch = function () { return Promise.reject(new Error('offline')); };
 
   setTimeout(function () {
     // ---- 桥本身 ----
-    ok('window.petHostEvent 已导出（宿主靠它驱动网页）',
-       typeof window.petHostEvent === 'function', typeof window.petHostEvent);
+    // 2026-10-26「跑步」整段删除后，宿主不再需要驱动网页播动画，
+    // 双向桥退化成单向（只有网页 → 宿主）。
+    ok('不再导出 petHostEvent（跑动已删除）',
+       typeof window.petHostEvent === 'undefined', typeof window.petHostEvent);
+    ok('清单里已无 run 剪辑', !window.PET_MANIFEST.clips.run,
+       Object.keys(window.PET_MANIFEST.clips).join(','));
     // 真正证明"网页 → 宿主"这条通道通着：点她一下，宿主应当收到 clicked
     clear();
     click();
     ok('页面能把指令发给宿主（点一下 → 宿主收到 clicked）',
        lastCmd() === 'clicked', cmds().join(','));
-    ok('真实清单里有 run 剪辑（否则跑步会被静默跳过）',
-       !!(window.PET_MANIFEST.clips.run), Object.keys(window.PET_MANIFEST.clips).join(','));
-    ok('run 声明了 flipForLeft', !!window.PET_MANIFEST.clips.run.flipForLeft,
-       window.PET_MANIFEST.clips.run.flipForLeft);
-
-    // ---- 宿主 → 网页 ----
-    window.petHostEvent('runStart', { dir: -1, durationMs: 400 });
-    ok('向左跑切到 run 的图集', sheet().indexOf('run.png') !== -1, sheet().slice(-40));
-    ok('向左跑写入 --pet-flip=-1（CSS 靠它做 scaleX）', flip() === '-1', flip());
-
-    window.petHostEvent('runStart', { dir: 1, durationMs: 400 });
-    ok('向右跑 --pet-flip=1', flip() === '1', flip());
-
-    window.petHostEvent('runEnd', {});
-    ok('跑完离开 run 图集', sheet().indexOf('run.png') === -1, sheet().slice(-40));
-    ok('跑完朝向复位为 1', flip() === '1', flip());
-
-    var survived = true;
-    try {
-      window.petHostEvent('runStart', {});
-      window.petHostEvent('unknownEvent', null);
-      window.petHostEvent('runEnd');
-    } catch (e) { survived = false; }
-    ok('参数缺失或未知事件不抛异常', survived, survived ? '' : 'threw');
 
     // ---- 网页 → 宿主：右键 / 双击 = 复位（不弹菜单）----
     // 回归①：contextmenu 在 WKWebView 里**不触发**（日志证据：用户的点击一堆，

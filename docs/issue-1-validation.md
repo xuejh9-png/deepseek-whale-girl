@@ -83,6 +83,71 @@
 
 仍未覆盖：费用是按模型单价折算，不是中转站实际扣费；WorkBuddy / Codex 的订阅内消耗不计金额。
 
+## 2026-10-26 16:22 追加：删除跑步动作 / 修复「在跑任务却显示空闲」
+
+### 1. 「跑步」动作删除
+
+需求原话：「把跑步的那个动作直接删掉吧先，就是可以备份但是不要出现这个功能了，化繁为简」。
+
+删除的是**整套跑动机制**，不是只隐藏动画：
+
+| 层 | 删除内容 |
+|---|---|
+| 宿主 `desktop/main.swift` | `runTimer/runFrom/runTo/runT0/runDur/runCycleSeconds`、`runHome()`、`lapAnchor()`、`runDuration()`、`startRun()`、`sendToPage()`、`runSelfTest()`、`case "runCycle"`、⌥⌘H 的 `goHomeOrLap()` |
+| 网页 `web/pet.js` | `reportRunCycle()`、`window.petHostEvent` 的 `runStart/runFlip/runEnd` |
+| 运行时 `web/pet-runtime.js` | `ACTION_CLIP.runLeft/runRight`、`facing`、`setFacing()`、`applyFacing()` |
+| 样式 `web/pet.css` | `transform: scaleX(var(--pet-flip, 1))` 及注释 |
+| 清单 | `clips.run`（由 10 个剪辑降为 9 个） |
+
+保留：双击 / 右键 / ⌥⌘H 的**归位**能力，改为 `snapHome()` 一次 `setFrameOrigin` 瞬时到位；
+拖动夹边界、位置记忆、换屏回落默认位全部不动。
+素材 `assets/pet/run.png`、`assets/run-12-final/` 原样留在磁盘，清单不再引用。
+回滚标签 `backup-before-remove-run`，恢复步骤见 `docs/2026-10-26-移除跑步动作.md`。
+
+### 2. 「我在跑任务，宠物还是空闲」根因
+
+用户截图：WorkBuddy 正在处理任务（2m1s），宠物仍是待机姿态。
+
+`/state` 的现场证据：
+
+| 会话 | 心跳年龄 | 会话日志写入年龄 | 实际 |
+|---|---|---|---|
+| 当前会话 `0fb0ca69`（cwd 本地宠物） | 186.7 s（已"过期"） | **1.3 s** | 正在跑任务 |
+| 僵尸会话 `5c437c82`（cwd Investment OS 源码） | **11.0 s（新鲜）** | 604955.8 s ≈ 7 天 | 早已没活动 |
+
+两个叠加的缺陷：
+
+1. `WorkBuddySource._active_sessions` 用 `now - lastHeartbeat < 60s` 判定活跃。
+   实测本机 `sessions/*.json` 的 `startedAt / lastHeartbeat / updatedAt` 是**同一秒** ——
+   心跳只在会话启动时写一次。于是 60 秒后正在干活的会话被踢出列表。
+2. `AutoSource._key` 用 `max(lastActivity, lastHeartbeat)` 打分，心跳因此成为主排序键。
+   剩下唯一"心跳新鲜"的僵尸会话永远排第一，卡片长期显示它的「睡着啦」。
+
+修复：
+
+- 活跃判定改为「心跳新鲜 **或** 该会话 jsonl 在 60 秒内被写过」——
+  日志写入才是"真的在干活"的证据。
+- `AutoSource._key` 与 `WorkBuddySource.snapshot()` 的排序都只看 `lastActivity`，
+  心跳完全不参与打分。
+
+### 3. 本轮验证
+
+| 验证 | 结果 |
+|---|---|
+| `python3 pet_sources.test.py` | **34 项通过**（新增"心跳停了但日志在写"、"僵尸心跳不压活跃会话"） |
+| `python3 -m unittest test_usage` | 23 项通过 |
+| `pet-runtime.test.html`（Chrome headless） | 30 项通过 |
+| `pet-bridge.test.html`（Chrome headless） | 14 项通过（run 断言改为"清单已无 run"） |
+| `pet-wake.test.html` | 11 项通过 |
+| `pet-metrics.test.html` | 16 项通过 |
+| `zsh desktop/build.sh` | 通过 |
+| `--selftest-home` | `from=(940,115) end=(1260,75) home=(1260,75) landed=Y BAD=0` |
+| 真机 `/state` | `state=working, label=执行中, source=workbuddy, cwd=当前工作区`；僵尸会话仍在列表但为 `sleeping`、`heartbeatFresh=true` 且不再抢占 |
+| 真机截屏（放大核对） | 角色为「坐着敲电脑」的 work 剪辑，不再是待机站姿 |
+
+仍未覆盖：宿主端"双击归位是不是真的瞬间完成"没有自动化断言（`--selftest-home` 只验落点）；
+归位路径已无任何定时器与动画调用，实际观感仍需用户手点一次确认。
+
 ## 尚未验证 / 限制
 
 - 无真实完整账单，未验证与中转站后台累计消费的实际金额对账；导出完整性依赖账单声明。

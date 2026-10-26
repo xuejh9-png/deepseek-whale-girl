@@ -8,8 +8,6 @@
         没有该剪辑时退化为 idle，并把兜底交回 CSS
      3. 动作队列 —— 瞬时动作（clicked/grabbed/released/…）
         优先于状态，播完自动回到当前状态
-     4. 朝向 —— manifest 声明 flipForLeft 的剪辑（run），
-        向左播放时把整层水平翻转，否则会「倒着滑」
   性能：用 rAF + 时间累积，**只在真正换帧时碰 DOM**；
         不使用 setInterval，不逐帧写样式。
    ============================================================ */
@@ -44,8 +42,6 @@
     grabbed:  'drag',    // 第 2 批素材
     dragging: 'drag',    // 第 2 批素材
     released: 'jump',    // 第 2 批素材（从 airborneFrame 起播 = 下落+落地）
-    runLeft:  'run',     // 第 3 批素材
-    runRight: 'run',
     wakeUp:   'sleep'    // 复用 sleep 的**倒放**当起身，见 startAction
   };
 
@@ -68,7 +64,6 @@
     this.queue = [];
     this.done = false;       // 当前一次性剪辑是否已播完
     this.reverse = false;    // 是否倒放（"起身"用）
-    this.facing = 1;         // 1=素材原朝向（右）；-1=向左，需翻转
     this.onActionDone = opts.onActionDone || null;
   }
 
@@ -138,7 +133,6 @@
     this.done = false;
     this.loopThis = (meta.loop && !opts.once);
     this.reverse = !!opts.reverse && !this.loopThis;
-    this.applyFacing();
 
     var self = this;
     var url = this.basePath + meta.file;
@@ -163,23 +157,6 @@
       img.src = url;
     }
     return true;
-  };
-
-  /* ---------------- 朝向 ----------------
-     素材画的是「向右侧视角」跑步。向左跑时不翻转 = 倒着滑。
-     是否翻转由 manifest 的 flipForLeft 决定，运行时不自作主张。 */
-
-  PetAnimation.prototype.setFacing = function (dir) {
-    this.facing = (dir < 0) ? -1 : 1;
-    this.applyFacing();
-  };
-
-  PetAnimation.prototype.applyFacing = function () {
-    var m = this.meta;
-    var flip = (m && m.flipForLeft && this.facing < 0) ? -1 : 1;
-    if (this.root.style.getPropertyValue('--pet-flip') !== String(flip)) {
-      this.root.style.setProperty('--pet-flip', String(flip));
-    }
   };
 
   // 按元素实际尺寸算 sheet 缩放，换剪辑 / 窗口变化时都要重算
@@ -288,10 +265,6 @@
       // 按当前状态（sleeping）把她按回睡姿 —— 看起来就是"刚爬起来又躺下"。
       var cur = (this.clipName === 'sleep') ? this.frame + 1 : 1;
       opts = { once: true, reverse: true, from: cur };
-    } else if (item.name === 'runLeft') {
-      this.setFacing(-1);
-    } else if (item.name === 'runRight') {
-      this.setFacing(1);
     }
     this.playClip(clip, opts);
     return true;

@@ -32,7 +32,7 @@ def iso(ago_sec):
 # 造一棵假的 ~/.workbuddy 目录树（projects/*.jsonl + sessions/*.json 心跳），
 # 就能在受控时间戳下测真实解析逻辑，不依赖"你此刻正好在用 WorkBuddy"。
 
-def build_workbuddy(root, events, heartbeat_age=5, session_id="sid-test"):
+def build_workbuddy(root, events, heartbeat_age=5, session_id="sid-test", log_age=None):
     projects = os.path.join(root, "projects", "demo-project")
     sessions = os.path.join(root, "sessions")
     os.makedirs(projects, exist_ok=True)
@@ -44,6 +44,11 @@ def build_workbuddy(root, events, heartbeat_age=5, session_id="sid-test"):
             rec = {"timestamp": now - int(ago_sec * 1000), "type": t}
             rec.update(extra or {})
             fh.write(json.dumps(rec) + "\n")
+    # 文件刚写完，mtime 必然是"现在"。要造"日志很久没写"的场景必须显式改 mtime，
+    # 否则测的永远是"刚写过"这一种情况。
+    if log_age is not None:
+        stamp = time.time() - log_age
+        os.utime(p, (stamp, stamp))
     with open(os.path.join(sessions, session_id + ".json"), "w", encoding="utf-8") as fh:
         json.dump({"sessionId": session_id, "cwd": "/tmp/demo-project",
                    "lastHeartbeat": now - int(heartbeat_age * 1000)}, fh)
@@ -87,21 +92,62 @@ def workbuddy_tests():
     finally:
         SRC.PROJECTS_DIR, SRC.SESSIONS_DIR = save_p, save_s
 
-    # 心跳过期 = 没在跑 → offline（而不是 sleeping：offline 没有可信时刻，不猜）
+    # 两个证据都过期 = 没在跑 → offline
+    # （而不是 sleeping：offline 没有可信时刻，不猜）
     tmp = tempfile.mkdtemp()
     try:
-        build_workbuddy(tmp, [(5, "reasoning", {})], heartbeat_age=600)
+        build_workbuddy(tmp, [(5, "reasoning", {})], heartbeat_age=600, log_age=600)
         SRC.PROJECTS_DIR = os.path.join(tmp, "projects")
         SRC.SESSIONS_DIR = os.path.join(tmp, "sessions")
         got = SRC.WorkBuddySource().snapshot()
         good = got["state"] == "offline"
         ok += good
-        print(f"  {'✓' if good else '✗'} {'心跳过期':14} 期望 offline  实得 {got['state']}")
+        print(f"  {'✓' if good else '✗'} {'心跳+日志都过期':14} 期望 offline  实得 {got['state']}")
     finally:
         SRC.PROJECTS_DIR, SRC.SESSIONS_DIR = save_p, save_s
         shutil.rmtree(tmp, ignore_errors=True)
 
-    return ok, len(WB_CASES) + 1
+    # 回归：2026-10-26 用户报"我在跑任务，宠物却一直空闲"。
+    # 实测 WorkBuddy 的心跳**只在会话启动时写一次**，一分钟后必然"过期"；
+    # 只看心跳会把正在干活的会话踢出列表。日志刚写过 = 真的在干活。
+    tmp = tempfile.mkdtemp()
+    try:
+        build_workbuddy(tmp, [(3, "reasoning", {})], heartbeat_age=600, log_age=0)
+        SRC.PROJECTS_DIR = os.path.join(tmp, "projects")
+        SRC.SESSIONS_DIR = os.path.join(tmp, "sessions")
+        got = SRC.WorkBuddySource().snapshot()
+        good = got["state"] == "thinking"
+        ok += good
+        print(f"  {'✓' if good else '✗'} {'心跳停了但日志在写':14} 期望 thinking 实得 {got['state']}")
+    finally:
+        SRC.PROJECTS_DIR, SRC.SESSIONS_DIR = save_p, save_s
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # 回归（更需要盯住的那一半）：僵尸会话的心跳比谁都新、日志却七天没写。
+    # 它不能压过真正在跑的那个会话 —— AutoSource 必须选到正在干活的。
+    tmp = tempfile.mkdtemp()
+    try:
+        build_workbuddy(tmp, [(3, "function_call", {})], heartbeat_age=600,
+                        session_id="zzz-live", log_age=0)
+        build_workbuddy(tmp, [(604800, "message", {"role": "assistant", "content": "done"})],
+                        heartbeat_age=1, session_id="aaa-zombie", log_age=604800)
+        SRC.PROJECTS_DIR = os.path.join(tmp, "projects")
+        SRC.SESSIONS_DIR = os.path.join(tmp, "sessions")
+        save_c = SRC.CODEX_SESSIONS
+        SRC.CODEX_SESSIONS = os.path.join(tmp, "no-codex")
+        try:
+            got = SRC.AutoSource().snapshot()
+        finally:
+            SRC.CODEX_SESSIONS = save_c
+        good = got["state"] == "working" and got.get("sessionId") == "zzz-live"
+        ok += good
+        print(f"  {'✓' if good else '✗'} {'僵尸心跳不压活跃会话':14} 期望 working/zzz-live 实得 "
+              f"{got['state']}/{got.get('sessionId')}")
+    finally:
+        SRC.PROJECTS_DIR, SRC.SESSIONS_DIR = save_p, save_s
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    return ok, len(WB_CASES) + 3
 
 
 def build_codex(root, events):

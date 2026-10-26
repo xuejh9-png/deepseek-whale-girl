@@ -1,11 +1,10 @@
 /* ============================================================
    WorkBuddy Pet —— 胶水层
    ------------------------------------------------------------
-   这一层只做四件事，不含动画逻辑（动画在 pet-runtime.js）：
+   这一层只做三件事，不含动画逻辑（动画在 pet-runtime.js）：
      1. 建运行时、开 rAF 循环（唯一的定时源）
      2. 拉 /state → 喂给状态机
-     3. 指针事件 → 触发动作
-     4. 桌面宿主（Swift）的消息桥
+     3. 指针事件 → 触发动作；需要宿主做的事（拖动/归位/菜单）用消息桥发过去
    ============================================================ */
 (function () {
   'use strict';
@@ -201,18 +200,7 @@
 
   function startPolling() {
     if (timer) return;
-    /* 把「一个跑步动画周期多长」告诉宿主 —— 只报一次。
-     为什么必须由网页报：manifest 只有这一侧知道，宿主拿不到。
-     宿主需要它才能把"位移时长"对齐到整数个迈步周期；
-     之前宿主里把这个值写死成 12帧/16fps，换素材后就对不上了。 */
-  (function reportRunCycle() {
-    var c = (window.PET_MANIFEST && window.PET_MANIFEST.clips || {}).run;
-    if (c && c.fps && c.frameCount) {
-      tell('runCycle', { seconds: c.frameCount / c.fps });
-    }
-  })();
-
-  poll();
+    poll();
     timer = setInterval(poll, POLL_MS);
   }
 
@@ -236,7 +224,7 @@
   }
 
   body.addEventListener('pointerdown', function (e) {
-    // 右键 = 复位（跑回初始位置）。
+    // 右键 = 归位（瞬时回默认位，不播跑动）。
     // **不依赖 contextmenu** —— 实测它在 WKWebView 里不触发
     //（日志证据：用户的点击有一堆 dragBegin/clicked，menu 一次都没有）。
     // pointerdown 的 button===2 是可靠的信号。
@@ -286,7 +274,7 @@
     setTilt(0);
     tell('dragEnd');
 
-    // 双击 = 复位（跑回初始位置）。
+    // 双击 = 归位（瞬时回默认位）。
     // 为什么值得单独加一条：`clicked` 是**实测最可靠**的信号（日志里一堆），
     // 而右键那条路（contextmenu）在 WKWebView 里根本不触发。
     // 用户要求"跑动不要出现在菜单里"，所以这里是**直接手势**，不弹菜单。
@@ -353,24 +341,4 @@
   ['pointerup', 'pointercancel'].forEach(function (t) {
     document.addEventListener(t, function () { clearTimeout(pressTimer); });
   });
-
-  /* ---------------- 宿主 → 网页 的事件 ----------------
-     Swift 用 evaluateJavaScript 调 window.petHostEvent(name, payload)。
-     目前只服务「跑回初始位置」：**窗口移动是宿主的活，动画是网页的活**，
-     两边各管一半，不互相猜。 */
-
-  window.petHostEvent = function (name, payload) {
-    payload = payload || {};
-    if (name === 'runStart') {
-      // dir < 0 = 向左跑。运行时按 manifest 的 flipForLeft 决定是否翻转。
-      anim.trigger(payload.dir < 0 ? 'runLeft' : 'runRight', true);
-    } else if (name === 'runFlip') {
-      // 折返：只改朝向，**不重启剪辑** —— 重启会在折返处看到明显顿挫
-      if (anim.setFacing) anim.setFacing(payload.dir < 0 ? -1 : 1);
-    } else if (name === 'runEnd') {
-      // run 是循环剪辑，自己永远不会"播完"，必须由宿主显式收尾，
-      // 否则她会一直原地跑（和之前 drag 不落地的坑同一个成因）。
-      anim.clearActions();
-    }
-  };
 })();

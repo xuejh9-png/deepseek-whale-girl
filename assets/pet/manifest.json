@@ -68,19 +68,6 @@
       "loopStart": 5,
       "loopEnd": 12
     },
-    "run": {
-      "file": "run.png",
-      "frameCount": 12,
-      "rows": 2,
-      "fps": 18,
-      "loop": true,
-      "loopStart": 1,
-      "loopEnd": 12,
-      "flipForLeft": true,
-      "stridePxPerCycle": 180,
-      "viewAngle": "threeQuarter",
-      "viewAngleNote": "3/4（半侧）视角。鞋底倾角与脚锁定这两条判据是按纯侧视写的（假设鞋长轴在画面水平），在 3/4 视角下脚朝前+里的方向，画面上的鞋本来就是斜的、被透视压短 → 判据不适用，只报告不拦截。2026-09-24 用户换成 3/4 视角素材后修正。"
-    },
     "success": {
       "file": "success.png",
       "frameCount": 14,

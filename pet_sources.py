@@ -129,7 +129,18 @@ class WorkBuddySource(BaseSource):
         return os.path.isdir(PROJECTS_DIR)
 
     # ---- 读活跃会话 ----
-    def _active_sessions(self, now):
+    def _active_sessions(self, now, paths):
+        """「这个会话还活着」有两个证据，满足任一条即可：
+
+        ① 心跳新鲜 —— 进程还开着（WorkBuddy 客户端写的）
+        ② 会话日志刚被写过 —— 真的在干活
+
+        ⚠️ ② 不能省。实测本机 `sessions/*.json` 的心跳**只在会话启动时写一次**
+        （startedAt / lastHeartbeat / updatedAt 是同一秒），一分钟后就"过期"了，
+        而 `projects/*/*.jsonl` 一直在写。只认心跳会得到两个后果：
+        正在干活的会话被踢出列表，宠物转而去读另一个心跳还在刷、
+        但七天没活动的僵尸会话 —— 用户明明在跑任务，卡片上却是「睡着啦」。
+        """
         out = []
         for p in glob.glob(os.path.join(SESSIONS_DIR, "*.json")):
             try:
@@ -137,10 +148,29 @@ class WorkBuddySource(BaseSource):
                     d = json.load(fh)
             except Exception:
                 continue
+            sid = d.get("sessionId")
+            if not isinstance(sid, str) or not sid:
+                continue
             hb = d.get("lastHeartbeat") or 0
-            if isinstance(hb, (int, float)) and 0 <= now - hb < SLEEP_MS and d.get("sessionId"):
+            hb_fresh = isinstance(hb, (int, float)) and 0 <= now - hb < SLEEP_MS
+            log_ms = self._log_write_ms(paths, sid)
+            log_fresh = log_ms > 0 and 0 <= now - log_ms < SLEEP_MS
+            if hb_fresh or log_fresh:
+                d["_logWrite"] = log_ms
+                d["_hbFresh"] = hb_fresh
                 out.append(d)
         return out
+
+    @staticmethod
+    def _log_write_ms(paths, sid):
+        """该会话日志最后一次写入的毫秒时间戳；文件不存在/有歧义则 0。"""
+        matches = paths.get(sid, [])
+        if len(matches) != 1:
+            return 0
+        try:
+            return int(os.path.getmtime(matches[0]) * 1000)
+        except OSError:
+            return 0
 
     def _read_tail(self, path, limit=320, bytes_=900_000):
         try:
@@ -205,7 +235,7 @@ class WorkBuddySource(BaseSource):
         for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
             paths.setdefault(os.path.basename(path)[:-6], []).append(path)
         active = {}
-        for session in self._active_sessions(now):
+        for session in self._active_sessions(now, paths):
             sid = session["sessionId"]
             if not isinstance(sid, str):
                 continue
@@ -222,8 +252,10 @@ class WorkBuddySource(BaseSource):
             if not recs:
                 continue
             task = self._session_snapshot(matches[0], recs, session, now)
-            task.update(id="workbuddy:" + sid, heartbeatFresh=True,
-                        lastHeartbeat=session["lastHeartbeat"])
+            task.update(id="workbuddy:" + sid,
+                        heartbeatFresh=bool(session.get("_hbFresh")),
+                        lastHeartbeat=session["lastHeartbeat"],
+                        lastWrite=session.get("_logWrite") or 0)
             tasks.append(task)
         for task in tasks:
             task["activeSessions"] = len(tasks)
@@ -235,9 +267,13 @@ class WorkBuddySource(BaseSource):
         if not tasks:
             return blank("offline", source=self.name)
         # Completion of one session must not mask another executing session.
+        # 同状态时选**最后真的动过**的那个：僵尸会话的心跳可能比谁都新，
+        # 但它的日志几天没写了，不该抢过刚被写过的会话。
         priority = {"working": 0, "thinking": 1, "error": 2, "waiting": 3,
                     "success": 4, "idle": 5, "sleeping": 6}
-        return min(tasks, key=lambda t: (priority.get(t["state"], 9), t["id"]))
+        return min(tasks, key=lambda t: (priority.get(t["state"], 9),
+                                         -(t.get("lastActivity") or 0),
+                                         t["id"]))
 
     def _session_snapshot(self, path, recs, session, now):
         state, rec = "idle", {}
@@ -513,9 +549,11 @@ class AutoSource(BaseSource):
         src, snap = pair
         state = snap.get("state")
         active = 1 if state in cls.ACTIVE else 0
-        # WorkBuddy 有心跳文件，比日志时间更能代表「这个会话还开着」；
-        # Codex 没有心跳，只能看最后一条事件。
-        fresh = max(snap.get("lastActivity") or 0, snap.get("lastHeartbeat") or 0)
+        # 只认「最后一次真的有动静」的日志时间。
+        # ⚠️ 不要把 lastHeartbeat 算进来：心跳只证明进程开着，不证明有活干。
+        #    实测一个七天没活动的僵尸会话，心跳一直在刷 —— 它的心跳会永远
+        #    压过用户此刻正在跑的那个会话（心跳只在启动时写过一次）。
+        fresh = snap.get("lastActivity") or 0
         # 先看谁在动，再看谁最后动过，最后才按状态语义；同分时 WorkBuddy 优先。
         return (-active, -fresh, cls.RANK.get(state, 9),
                 0 if src.name == "workbuddy" else 1)

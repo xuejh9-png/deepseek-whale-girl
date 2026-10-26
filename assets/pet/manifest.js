@@ -70,17 +70,6 @@ window.PET_MANIFEST = {
       "loopStart": 5,
       "loopEnd": 12
     },
-    "run": {
-      "file": "run.png",
-      "frameCount": 12,
-      "rows": 2,
-      "fps": 18,
-      "loop": true,
-      "loopStart": 1,
-      "loopEnd": 12,
-      "flipForLeft": true,
-      "stridePxPerCycle": 180
-    },
     "success": {
       "file": "success.png",
       "frameCount": 14,

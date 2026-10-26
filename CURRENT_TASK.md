@@ -48,3 +48,24 @@ web/pet.js、web/pet.css、desktop/main.swift、test_usage.py、pet-metrics.test
 本轮改动文件：pet_sources.py、pet_daemon.py、usage_stats.py、claude_cost.py、pet.html、
 web/pet.js、web/pet.css、pet-metrics.test.html、test_usage.py、README.md、本文件、验证记录。
 验证结果见 docs/issue-1-validation.md 的「2026-10-26 16:00 追加」一节。
+
+## 2026-10-26 16:22 接续（用户口头追加，已完成）
+
+1. **删除「跑步」动作**（用户：「直接删掉，可以备份但不要出现这个功能，化繁为简」）。
+   删除范围：宿主 `runHome/lapAnchor/runDuration/startRun/sendToPage/runSelfTest/runCycle`、
+   网页 `petHostEvent`、运行时 `runLeft/runRight/facing/flipForLeft`、CSS `--pet-flip`、
+   清单 `clips.run`。
+   **保留**归位能力与防丢机制，归位改为 `snapHome()` 一次 `setFrameOrigin` 瞬时到位。
+   素材 `assets/pet/run.png`、`assets/run-12-final/` 未删；回滚标签 `backup-before-remove-run`；
+   恢复说明 `docs/2026-10-26-移除跑步动作.md`。
+2. **修复"我在跑任务、宠物还是空闲"**。根因：WorkBuddy 的 `sessions/*.json` 心跳
+   **只在会话启动时写一次**，`_active_sessions` 用 `now - heartbeat < 60s` 判定，
+   一分钟后正在干活的会话被踢出列表；剩下唯一"心跳还新鲜"的是一个七天没活动的僵尸会话
+   （`5c437c82`，cwd=Investment OS 源码），于是卡片显示睡着/空闲。
+   修复：活跃判定改为「心跳新鲜 **或** 会话日志 60 秒内被写过」；
+   `AutoSource._key` 与队列排序只看 `lastActivity`，心跳不再参与打分。
+
+本轮改动文件：desktop/main.swift、web/pet.js、web/pet-runtime.js、web/pet.css、
+assets/pet/manifest.json、assets/pet/manifest.js、pet-bridge.test.html、pet-runtime.test.html、
+pet_sources.py、pet_sources.test.py、README.md、docs/2026-10-26-移除跑步动作.md、本文件、验证记录。
+验证结果见 docs/issue-1-validation.md 的「2026-10-26 16:22 追加」一节。

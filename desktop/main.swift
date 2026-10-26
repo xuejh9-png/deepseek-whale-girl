@@ -65,15 +65,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var hotKeyHandler: EventHandlerRef?
     var hotKeyActions: [UInt32: () -> Void] = [:]
 
-    // 跑动（复位 / ⌥⌘H 时用 run 剪辑）
-    var runTimer: Timer?
-    var runFrom = NSPoint.zero
-    var runTo = NSPoint.zero
-    var runT0 = Date()
-    var runDur: TimeInterval = 0
-    /// 一个跑步动画周期多长（秒）。由网页上报，见 refreshRunCycle()。
-    var runCycleSeconds: TimeInterval = 0.75
-
     // 窗口 = 素材画布的实际显示尺寸（320×400 画布 @ 0.5 缩放）。
     // 角色本体占画布高度 64%，对应屏幕高度 128 CSS px。
     // 改大小：同时改 web/pet.css 的 --pet-char-height 和这两个值。
@@ -116,16 +107,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 用户反馈它破坏观感 —— 改成全局快捷键：
     // 用 Carbon 注册，**不需要窗口获得焦点**，所以不会把你正在用的窗口抢走。
     //
-    // ⌥⌘Q 退出 ／ ⌥⌘H 跑一下（回初始位置）
+    // ⌥⌘Q 退出 ／ ⌥⌘H 归位（瞬时到位，不播跑动）
     //
-    // ⚠️ 加 ⌥⌘H 的原因：鼠标那条路（右键菜单）依赖"窗口此刻吃不吃鼠标事件"，
-    // 一旦穿透判定出问题，菜单就点不出来、用户完全不知道该怎么办。
+    // ⚠️ 保留 ⌥⌘H 的原因：鼠标那条路依赖"窗口此刻吃不吃鼠标事件"，
+    // 一旦穿透判定出问题，就点不动她、用户完全不知道该怎么办。
     // 键盘这条路不经过鼠标命中测试，是**必然可用**的兜底。
 
     func installHotKeys() {
         registerHotKey(id: 1, key: UInt32(kVK_ANSI_Q), label: "⌥⌘Q 退出") { NSApp.terminate(nil) }
-        registerHotKey(id: 2, key: UInt32(kVK_ANSI_H), label: "⌥⌘H 复位") { [weak self] in
-            self?.goHomeOrLap()
+        registerHotKey(id: 2, key: UInt32(kVK_ANSI_H), label: "⌥⌘H 归位") { [weak self] in
+            self?.snapHome()
         }
     }
 
@@ -239,49 +230,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set([Double(o.x), Double(o.y)], forKey: originKey)
     }
 
-    // MARK: 自检（--selftest-runhome）
+    // MARK: 自检（--selftest-home）
     //
-    // 跑动逻辑是"宿主移窗口 + 网页播动画"两半拼起来的，
-    // 而移窗口这件事在无头环境里没法点菜单验证 —— 所以留一个入口：
-    // 启动后自动挪开一段距离，再跑回初始位置，把轨迹打到 stderr 后自己退出。
+    // 归位是"宿主把窗口挪回默认位"，在无头环境里没法用鼠标点出来验证 —— 所以留一个入口：
+    // 先把窗口挪到明显偏离的位置，再调用一次归位，断言落点就是默认位。
     //
-    //   desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-runhome
-    //
-    // 断言三件事：① 轨迹单调靠近（没有来回抖）② 最终落在初始位
-    // ③ 全程没有掉帧式跳变（每步位移不超过步长上限）
+    //   desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-home
 
-    func runSelfTest() {
+    func snapHomeSelfTest() {
         selfTesting = true
         let home = clampOrigin(homeOrigin())
 
         // 先挪到一个明显偏离的位置（左侧 320px、上方 40px）
         window.setFrameOrigin(clampOrigin(NSPoint(x: home.x - 320, y: home.y + 40)))
         let from = window.frame.origin
-        NSLog("WorkBuddyPetSELFTEST: from=(\(from.x),\(from.y)) home=(\(home.x),\(home.y))")
-
-        var xs: [CGFloat] = []
-        var bad = 0
-        let obs = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] t in
-            guard let self = self else { t.invalidate(); return }
-            xs.append(self.window.frame.origin.x)
-            if self.runTimer == nil && xs.count > 3 {
-                t.invalidate()
-                var maxStep: CGFloat = 0
-                for i in 1..<xs.count { maxStep = max(maxStep, abs(xs[i] - xs[i - 1])) }
-                let landed = abs(xs.last! - home.x) < 1.0
-                let yOK = abs(self.window.frame.origin.y - home.y) < 1.0
-                let monotonic = zip(xs, xs.dropFirst()).allSatisfy { $0 <= $1 + 0.5 }
-                bad = (monotonic ? 0 : 1) + (landed ? 0 : 1) + (yOK ? 0 : 1) + (maxStep > 30 ? 1 : 0)
-                NSLog(String(format: "WorkBuddyPetSELFTEST: xs=%ld from=%.1f end=%.1f home=%.1f "
-                             + "monotonic=%@ landed=%@ yOK=%@ maxStep=%.1f BAD=%ld",
-                             xs.count, from.x, xs.last!, home.x,
-                             monotonic ? "Y" : "N", landed ? "Y" : "N", yOK ? "Y" : "N",
-                             maxStep, bad))
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.terminate(nil) }
-            }
-        }
-        _ = obs
-        runHome()
+        snapHome()
+        let end = window.frame.origin
+        let landed = abs(end.x - home.x) < 1.0 && abs(end.y - home.y) < 1.0
+        NSLog(String(format: "WorkBuddyPetSELFTEST: from=(%.1f,%.1f) end=(%.1f,%.1f) "
+                     + "home=(%.1f,%.1f) landed=%@ BAD=%ld",
+                     from.x, from.y, end.x, end.y, home.x, home.y,
+                     landed ? "Y" : "N", landed ? 0 : 1))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.terminate(nil) }
     }
 
     /// 把 UserDefaults 取出的元素转成 Double。
@@ -325,109 +295,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return p
     }
 
-    // MARK: 跑动（唯一真正使用 run 剪辑的场合）
+    // MARK: 归位
+    //
+    // 原来这里是「跑回去」：60fps 定时器逐步挪窗口 + 网页播 run 剪辑 + 折返翻方向。
+    // 2026-10-26 用户要求「跑步这个动作不要出现，化繁为简」—— 整段已删除，
+    // 归位保留，但改成一次 setFrameOrigin 直接到位。
+    //
+    // 为什么保留归位：防丢机制（拖不出屏幕、记住位置）只保证"丢不了"，
+    // 不保证"好找"。拖到只剩 48px 在屏内时，一个回到默认位的入口仍然必要。
 
-    @objc func goHomeOrLap() {
+    func snapHome() {
         dragging = false
-        runHome()
-    }
-
-    func runHome() {
         let home = clampOrigin(homeOrigin())
-        var from = window.frame.origin
-
-        // 先纵向归位、再横向跑：宠物是"站在地上"的，横着跑才讲得通。
-        // 斜着跑会看起来像一边跑一边往上飘。
-        if abs(from.y - home.y) > 1 {
-            from.y = home.y
-            window.setFrameOrigin(from)
-        }
-
-        let dx = home.x - from.x
-
-        // ⚠️ 已经在原位时**不能什么都不做**。
-        // 用户点"跑一下"却看到她一动不动，会直接认为功能坏了
-        //（这次的反馈就是"我还是没看见她可以跑"）。
-        // 所以在原位时改成跑个来回 —— 保证这个动作**永远看得见**。
-        guard abs(dx) >= 40 else {
-            let lap = lapAnchor(home: home)
-            petLog("已在原位 → 跑个来回：\(Int(lap.x)) → \(Int(home.x))")
-            startRun(dx: lap.x - from.x, target: lap, continuing: false) { [weak self] in
-                guard let self = self else { return }
-                self.startRun(dx: home.x - self.window.frame.origin.x,
-                              target: home, continuing: true, then: nil)
-            }
-            return
-        }
-        startRun(dx: dx, target: home)
-    }
-
-    /// 原地折返的远端：往水平空间更宽的那一侧跑 120px
-    func lapAnchor(home: NSPoint) -> NSPoint {
-        let left = clampOrigin(NSPoint(x: home.x - 120, y: home.y))
-        if abs(left.x - home.x) >= 60 { return left }
-        return clampOrigin(NSPoint(x: home.x + 120, y: home.y))
-    }
-
-    /// 跑动速度：**按整个动画周期对齐**，不要停在迈步中间。
-    ///
-    /// ⚠️ 周期值由**网页**提供（`window.petRunCycleSeconds()`，见 pet.js）。
-    /// 之前这里写死了 12.0/16.0 而注释却写着"跟随 manifest" ——
-    /// 素材换成 8 帧 / 11fps 后位移和迈步就对不上，看起来发飘。这类"注释撒谎"
-    /// 是最难查的一档，所以宁可多一次跨进程调用也不写死。
-    func runDuration(for dx: CGFloat) -> TimeInterval {
-        let cycle = max(0.2, runCycleSeconds)
-        let stridePerCycle: CGFloat = 180       // 每个动画周期的目标位移
-        let cycles = max(1.0, (abs(dx) / stridePerCycle).rounded())
-        return min(6.0, max(cycle, cycles * cycle))
-    }
-
-    /// continuing=true 表示"上一段还没停" —— 只翻方向、不重启剪辑，
-    /// 否则折返处会看到她重新起跑一次（有明显顿挫）。
-    func startRun(dx: CGFloat, target: NSPoint, continuing: Bool = false,
-                  then: (() -> Void)? = nil) {
-        runFrom = window.frame.origin
-        runTo = target
-        runDur = runDuration(for: dx)
-        runT0 = Date()
-
-        let dir: Int = dx < 0 ? -1 : 1
-        if continuing {
-            sendToPage("runFlip", ["dir": dir])
-        } else {
-            sendToPage("runStart", ["dir": dir, "durationMs": Int(runDur * 1000)])
-        }
-        let speed = abs(dx) / CGFloat(max(0.01, runDur))
-        petLog(String(format: "跑动%@ dir=%d dx=%d 用时%.2fs（%.0f px/s，%.1f 个跑步周期）",
-                      continuing ? "折返" : "开始", dir, Int(dx), runDur,
-                      speed, runDur / max(0.2, runCycleSeconds)))
-
-        runTimer?.invalidate()
-        runTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] t in
-            guard let self = self else { t.invalidate(); return }
-            let k = min(1.0, Date().timeIntervalSince(self.runT0) / self.runDur)
-            let eased = 1 - pow(1 - k, 2)             // 起步快、收尾稳
-            let x = self.runFrom.x + (self.runTo.x - self.runFrom.x) * CGFloat(eased)
-            self.window.setFrameOrigin(NSPoint(x: x, y: self.runTo.y))
-            if k >= 1.0 {
-                t.invalidate()
-                self.runTimer = nil
-                if let more = then {
-                    more()                            // 还有下一段
-                } else {
-                    self.sendToPage("runEnd", [:])
-                    self.saveOrigin()
-                    petLog("跑动结束 x=\(Int(self.window.frame.origin.x))")
-                }
-            }
-        }
-    }
-
-    func sendToPage(_ name: String, _ payload: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let json = String(data: data, encoding: .utf8) else { return }
-        webView.evaluateJavaScript("window.petHostEvent && window.petHostEvent(\"\(name)\", \(json));",
-                                   completionHandler: nil)
+        window.setFrameOrigin(home)
+        saveOrigin()
+        petLog("归位 → x=\(Int(home.x)) y=\(Int(home.y))")
     }
 
     // MARK: 载入
@@ -645,18 +527,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             saveOrigin()                      // 记住这次放的位置
             updatePassthrough()
 
-        case "runCycle":
-            // 网页上报"一个跑步动画周期多长"（秒）。只报一次，见 pet.js。
-            if let s = body["seconds"] as? Double, s > 0.05 {
-                runCycleSeconds = s
-                petLog(String(format: "跑步周期 %.3fs（由网页上报）", s))
-            }
-
         case "reset":
-            // 双击 / 右键她 = 复位（跑回初始位置）。
+            // 双击 / 右键她 = 归位（瞬时到位，不播跑动）。
             // 用户要求"跑动不要出现在菜单里"，所以改成直接手势触发。
-            dragging = false
-            runHome()
+            snapHome()
 
         case "menu":
             dragging = false
@@ -680,7 +554,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     //   · 删掉「当前：…」—— 看不太懂，不如不给
     //   · 删掉「跑一下」—— 放在菜单里"看起来很呆"
     //   · 删掉「置顶显示」—— 她就该一直置顶，不需要开关
-    // 跑动/复位改由**直接手势**触发（双击 / 右键），不经菜单：
+    // 归位改由**直接手势**触发（双击 / 右键），不经菜单：
     // 见 handle(cmd: "reset")。菜单只留退出，作为"关掉她"的鼠标兜底。
 
     func showMenu() {
@@ -711,8 +585,8 @@ let argv = CommandLine.arguments
 if let i = argv.firstIndex(of: "--url"), i + 1 < argv.count {
     delegate.baseURL = argv[i + 1]
 }
-if argv.contains("--selftest-runhome") {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { delegate.runSelfTest() }
+if argv.contains("--selftest-home") {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { delegate.snapHomeSelfTest() }
 }
 // 写入一次当前位置并退出 —— 用于验证「程序自己写、程序自己读」这条往返链路
 // （不要用 `defaults write` 造测试数据：它会把数字存成字符串，验的不是真实链路）
