@@ -48,6 +48,25 @@ function num(value) {
   return Number.isFinite(Number(value)) ? Number(value) : null;
 }
 
+/**
+ * 读一个 token 分量。**必须和 usage_stats.py 的 _tokens() 同语义**，
+ * 否则同一份 Claude 日志在 mac 和 win 上会算出两个数（2026-10-26 实测翻车）。
+ *
+ *   Python: usage.get(k, 0) → 字段缺失按 0 算；字段存在但不是 int → 整条跳过
+ *   这里:   字段缺失 / null → 0；存在但解析成 NaN 或负数 → null（整条跳过）
+ *
+ * 反过来的代价很大：原来缺失即跳过，某些客户端（实测 CherryStudio 那条链）
+ * 写的 assistant 记录不带 cache_creation_input_tokens，于是整条调用被丢掉，
+ * 「今日 Token」比接口账单少一大截，用户只会认定我们算错了。
+ */
+function pickCount(usage, key) {
+  if (!usage || !(key in usage)) return 0;
+  const raw = usage[key];
+  if (raw === null || raw === undefined) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 async function walk(dir, out = []) {
   let entries;
   try {
@@ -95,10 +114,10 @@ async function parseFile(file) {
     const model = String(msg.model || '');
     if (!isClaudeModel(model) || !rec.timestamp) continue;
     const counts = [
-      num(usage.input_tokens), num(usage.output_tokens),
-      num(usage.cache_creation_input_tokens), num(usage.cache_read_input_tokens),
+      pickCount(usage, 'input_tokens'), pickCount(usage, 'output_tokens'),
+      pickCount(usage, 'cache_creation_input_tokens'), pickCount(usage, 'cache_read_input_tokens'),
     ];
-    // 缺任何一个分量就没法按四条分量计价 —— 不猜，跳过
+    // 只有「字段存在但值不合法」才整条跳过；缺失的分量按 0 计（与 Python 版一致）
     if (counts.some((n) => n === null)) continue;
     const identity = msg.id || rec.requestId;
     // 没有稳定 ID 时，流式重复和多次请求无法区分 —— 不猜

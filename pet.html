@@ -14,26 +14,36 @@
 
 <div class="pet" id="pet" data-state="idle">
 
-  <div class="pet-body" id="petBody">
-    <div class="pet-inner">
-      <!-- 精灵图取帧（S2 之前固定显示 idle 第 1 帧） -->
-      <div class="pet-sprite" id="petSprite"></div>
+  <!-- 角色与两条铭牌共用的坐标系，尺寸恒等于精灵画布。
+       2026-10-26：原来标签直接贴窗口边缘（top:17 / bottom:0），
+       而角色尺寸是固定 200px 画布。Windows 跨缩放屏拖动时窗口 DIP
+       尺寸会被系统改掉，角色不动、标签跟着窗口跑 —— 用户看到的就是
+       「抓着宠物一拖，已花费的标签自己往上飘」。
+       现在两者共用 .pet-stage 这个盒子，窗口怎么变都不影响相对位置。 -->
+  <div class="pet-stage">
+
+    <div class="pet-body" id="petBody">
+      <div class="pet-inner">
+        <!-- 精灵图取帧（S2 之前固定显示 idle 第 1 帧） -->
+        <div class="pet-sprite" id="petSprite"></div>
+      </div>
+
+      <!-- 状态特效浮在头顶的画布留白区里，不占额外窗口空间 -->
+      <div class="pet-fx">
+        <span class="fx-dots"><i></i><i></i><i></i></span>
+        <span class="fx-ring"></span>
+        <span class="fx-mark">!</span>
+        <span class="fx-check">✓</span>
+      </div>
     </div>
 
-    <!-- 状态特效浮在头顶的画布留白区里，不占额外窗口空间 -->
-    <div class="pet-fx">
-      <span class="fx-dots"><i></i><i></i><i></i></span>
-      <span class="fx-ring"></span>
-      <span class="fx-mark">!</span>
-      <span class="fx-check">✓</span>
+    <!-- 两条铭牌刻意放在 petBody **外面**：它们的点击不能触发拖动/菜单 -->
+    <div class="pet-summary" id="petSummary">
+      <span id="petCost" title="未接入真实账单">已花费 —</span>
     </div>
-  </div>
-
-  <div class="pet-summary" id="petSummary">
-    <span id="petCost" title="未接入真实账单">已花费 —</span>
-  </div>
-  <div class="pet-meter">
-    <button type="button" id="petTokens" title="今日全部工具 Token；点击轮换来源">今日 读取中…</button>
+    <div class="pet-meter">
+      <button type="button" id="petTokens" title="今日全部工具 Token；点击轮换来源">今日 读取中…</button>
+    </div>
   </div>
 </div>
 

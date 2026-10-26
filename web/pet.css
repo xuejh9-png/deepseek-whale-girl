@@ -40,11 +40,21 @@ html, body {
   place-items: end center;
 }
 
-/* ---------- 角色本体（= 画布） ---------- */
-.pet-body {
+/* 角色 + 两条铭牌的公共坐标系。
+   ⚠️ 尺寸必须恒等于精灵画布（--pet-canvas-height），不能写成 inset:0：
+   标签要跟着**角色**走，而不是跟着窗口走。窗口被系统改高/改宽时
+   （Windows 跨不同缩放的显示器拖动就会），角色尺寸不变，标签也不该动。
+   这是 2026-10-26「抓着宠物一拖，已花费标签自己往上飘」的根因修复。 */
+.pet-stage {
   position: relative;
   height: var(--pet-canvas-height);
   width: calc(var(--pet-canvas-height) * var(--pet-aspect));
+}
+
+/* ---------- 角色本体（= 画布） ---------- */
+.pet-body {
+  position: absolute;
+  inset: 0;
   cursor: grab;
   /* 沿角色轮廓投影（不是 box-shadow），制造"浮在桌面上"的感觉 */
   filter: drop-shadow(0 6px 11px rgba(20, 30, 60, .22));
