@@ -88,6 +88,7 @@
   var metricsAt = 0, metricsDay = '', metricsBusy = false, metricsLoaded = false;
   var sourceNames = {workbuddy: 'WB', codex: 'Codex', claude: 'Claude'};
 
+
   /* 卡片上不再显示任务数 / 任务名（用户明确要求删掉）。
      任务仍然参与状态选择：优先观察「正在干活」的那个，让动画跟对人。 */
   function showTask() {

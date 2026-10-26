@@ -82,3 +82,22 @@ pet_sources.py、pet_sources.test.py、README.md、docs/2026-10-26-移除跑步�
 
 改动文件：desktop/main.swift、web/pet.js、pet-bridge.test.html、README.md、
 docs/2026-10-26-移除跑步动作.md、本文件、验证记录。
+
+## 2026-10-26 16:50 接续（同日第三轮，已完成）
+
+**1. 卡片一直显示 `已花费 —` / `今日 Token —`、角色一直 idle**
+
+根因：宿主先把 `file://` 页面显示出来，探到状态服务后再 `load(http)`。
+WKWebView 的安全上下文停在 file 那次，之后页面里所有 fetch 都带 `Origin: null`，
+被 `pet_daemon` 的 Origin 检查 403（服务端日志实测 `DENY /state origin=null`）。
+之前是竞态：有时 file 还没提交就被 http 顶掉，看着正常。
+
+修复：
+- `loadPage()` 先探一次端口（裸 socket，立刻返回），通了直接 `loadHTTP()`，完全不碰 file；
+- 确需从 file 升级时 `installWebView()` **重建实例**，只换 URL 不够；
+- `pet_daemon` 的 403 现在会记录具体原因（`PET_LOG_REQUESTS=1` 时），不再只有一句话。
+
+顺带确认：启动日志里"窗口起点"变化是用户手动拖动后记忆的位置，不是 bug；
+位置记忆与拖动夹边界未改动。
+
+改动文件：desktop/main.swift、pet_daemon.py、web/pet.js、README.md、本文件、验证记录。

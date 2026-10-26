@@ -170,7 +170,12 @@ class PetHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=HERE, **kwargs)
 
     def log_message(self, fmt, *args):
-        pass
+        # 默认安静：前端每 2/3 秒轮询一次，全打出来会把真正的线索淹掉。
+        # 排查「页面拿不到数据」这类问题时用 PET_LOG_REQUESTS=1 打开 ——
+        # 有没有请求到达服务端，是区分「请求没发出」和「请求被拒」的唯一办法。
+        if os.environ.get("PET_LOG_REQUESTS"):
+            sys.stderr.write("pet-http " + (fmt % args) + "\n")
+            sys.stderr.flush()
 
     def end_headers(self):
         origin = self.headers.get("Origin")
@@ -189,22 +194,41 @@ class PetHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _local_request(self):
-        # Host check also blocks DNS rebinding. Remote websites must not read
-        # task text or billing data. Opaque/null origins cannot read private APIs.
+        return self._local_request_reason()[0]
+
+    def _local_request_reason(self):
+        """返回 (是否允许, 拒绝原因)。
+
+        Host check also blocks DNS rebinding. Remote websites must not read
+        task text or billing data. Opaque/null origins cannot read private APIs.
+
+        把判定和原因分开，是为了让 403 能说清楚"到底哪一条没过" ——
+        之前只回一句 Local requests only，排查时只能猜。
+        """
         port = self.server.server_address[1]
         allowed = {"127.0.0.1:%d" % port, "localhost:%d" % port}
-        if self.headers.get("Host") not in allowed:
-            return False
+        host = self.headers.get("Host")
         origin = self.headers.get("Origin")
+        site = self.headers.get("Sec-Fetch-Site")
+        if host not in allowed:
+            return False, "host=%r" % host
         if origin == "null":
             # Preserve the existing local HTML report's refresh button only.
-            return urlparse(self.path).path in ("/regenerate", "/api/regenerate")
+            if urlparse(self.path).path in ("/regenerate", "/api/regenerate"):
+                return True, ""
+            return False, "origin=null"
         if origin is not None and origin not in {"http://" + h for h in allowed}:
-            return False
-        return self.headers.get("Sec-Fetch-Site") != "cross-site"
+            return False, "origin=%r" % origin
+        if site == "cross-site":
+            return False, "sec-fetch-site=cross-site"
+        return True, ""
 
     def do_GET(self):
-        if not self._local_request():
+        permit, reason = self._local_request_reason()
+        if not permit:
+            if os.environ.get("PET_LOG_REQUESTS"):
+                sys.stderr.write("pet-http DENY %s %s\n" % (self.path, reason))
+                sys.stderr.flush()
             self.send_error(403, "Local requests only")
             return
         path = urlparse(self.path).path

@@ -459,6 +459,12 @@ desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-save
 - **测试要自足**：网页回归测试不该依赖本机有没有跑状态服务。
   之前 `pet-bridge.test.html` 会真去连 `127.0.0.1:8791`，
   在没跑服务的机器上结果不同，而且定时器一直有活干会让无头浏览器**永不退出**
+- **页面只从一个来源加载**：要么 HTTP（状态联动），要么本地文件（独立模式）。
+  不在同一个 WKWebView 里"先 file 显示着、探通了再换 http" ——
+  换来源会把安全上下文留在 opaque origin 上，之后页面里所有 `fetch` 都带
+  `Origin: null`，被本地服务的 Origin 检查 403。
+  症状是"页面画得好好的，卡片却一直 —、角色一直 idle"，几乎无法从界面反推。
+  只有从本地文件切到 HTTP 时才不得不重建 webView 实例。
 - **颜色约定**：涨用红、跌用绿（A 股习惯）
 
 ---

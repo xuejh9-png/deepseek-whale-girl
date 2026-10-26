@@ -80,6 +80,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var selfTesting = false
     var daemonSpawnTried = false
     var lastMenuAt = Date.distantPast
+    /// 当前页面是不是从本地文件加载的。切到 HTTP 时必须换 webView 实例，
+    /// 这个标记就是"要不要重建"的依据（见 installWebView 的注释）。
+    var loadedFromFile = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)      // 不占 Dock
@@ -168,17 +171,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 必须能在外面对着日志验，而不是靠相信代码。
         petLog("WorkBuddyPetOK: 窗口起点 x=\(Int(o.x)) y=\(Int(o.y)) 来源=\(restored != nil ? "记忆" : "默认位")")
 
+        installWebView()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// 建一个新的 WKWebView 挂在窗口上。
+    ///
+    /// ⚠️ 单独抽出来是有原因的：`file://` 加载过的实例，安全上下文会停在
+    /// opaque origin 上。之后就算 `load()` 到 http，页面里所有 fetch 仍带
+    /// `Origin: null`，被本地服务的 Origin 检查 403 ——
+    /// 现象是"页面显示正常，但卡片一直 —、状态一直 idle"。
+    /// 从本地文件切到 HTTP 时必须换实例，只换 URL 不够。
+    func installWebView() {
         let cfg = WKWebViewConfiguration()
         cfg.userContentController.add(bridge, name: "petHost")
-
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: winW, height: winH),
-                            configuration: cfg)
-        webView.setValue(false, forKey: "drawsBackground")   // WebView 自身也透明
+        let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: winW, height: winH),
+                           configuration: cfg)
+        wv.setValue(false, forKey: "drawsBackground")   // WebView 自身也透明
         if #available(macOS 12.0, *) {
-            webView.underPageBackgroundColor = .clear
+            wv.underPageBackgroundColor = .clear
         }
-        window.contentView = webView
-        window.makeKeyAndOrderFront(nil)
+        window.contentView = wv
+        webView = wv
     }
 
     // MARK: 位置：默认位 / 记忆 / 边界约束
@@ -276,8 +290,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 通了就升级到 http 版本。
 
     func loadPage() {
-        loadLocalFile()                       // 立刻显示，不等网络
-        probeDaemon()                         // 后台探测，通了再升级
+        // 先探一次（裸 socket，loopback 上立刻返回），再决定加载哪一个。
+        //
+        // ⚠️ **不要"先加载 file:// 显示着，探通了再 load(http)"**：
+        //    WKWebView 的安全上下文会停在 file 那次，之后页面里所有 fetch
+        //    都带 `Origin: null`，被本地服务的 Origin 检查 403。
+        //    现象很迷惑：页面画得好好的，卡片却一直 —、角色一直 idle。
+        //    这个切换以前是竞态（有时 file 还没提交就被 http 顶掉，看着正常），
+        //    不能依赖它。
+        let port = URL(string: baseURL)?.port ?? 8791
+        if portOpen(port) {
+            loadHTTP()
+            return
+        }
+        loadLocalFile()                       // 独立模式兜底
+        probeDaemon()                         // 后台等服务起来再升级
+    }
+
+    /// 从 HTTP 加载宠物页（状态联动模式）
+    func loadHTTP() {
+        let base = baseURL.hasSuffix("/") ? baseURL : baseURL + "/"
+        guard let url = URL(string: base + "pet.html") else { return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 5
+        webView.load(req)
+        loadedFromFile = false
+        petLog("加载 HTTP 页面 \(url.absoluteString)")
     }
 
     /// 端口通不通 —— 直接用裸 socket connect。
@@ -324,14 +362,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // 端口通了 → 换成 http 版本。这一步用 WKWebView 自己的网络栈加载，
-        // 和上面那个探测无关（探测只用 socket，不受会话层影响）。
-        let base = baseURL.hasSuffix("/") ? baseURL : baseURL + "/"
-        guard let url = URL(string: base + "pet.html") else { return }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 5
-        webView.load(req)
-        petLog("已连接状态服务 \(base)（第 \(attempt + 1) 次探测）")
+        // 端口通了 → 升到 http 版本。
+        //
+        // ⚠️ 如果此前已经用 file:// 显示过（独立模式兜底），**必须换一个 webView 实例**：
+        //    旧实例的安全上下文停在 opaque origin，load 到 http 之后 fetch 仍带
+        //    `Origin: null`，服务端 403。只改 URL 不够，这个坑实测踩过。
+        if loadedFromFile {
+            petLog("从本地文件切到 HTTP → 重建 webView（旧实例会带 Origin: null）")
+            installWebView()
+        }
+        loadHTTP()
+        petLog("已连接状态服务（第 \(attempt + 1) 次探测）")
+
+        // 取证：页面最终跑在哪个 URL、哪个来源。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self = self else { return }
+            petLog("页面当前 URL：\(self.webView.url?.absoluteString ?? "nil")")
+        }
     }
 
     /// 项目根目录。
@@ -355,6 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         webView.loadFileURL(pet, allowingReadAccessTo: root)
+        loadedFromFile = true
     }
 
     /// 找不到状态服务就自己起一个（等价于双击 启动桌面宠物.command 里那一步）

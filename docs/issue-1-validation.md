@@ -178,3 +178,45 @@
 源码中 `reset` / `snapHome` / `lastClickAt` 计数均为 0。
 
 仍未覆盖：双击手感（是否完全无位移）需用户手点确认；自动化只能证明没有发出归位指令。
+
+### 5. 卡片全空（2026-10-26 16:50 追加）
+
+现象：宠物窗口位置正确、页面能画出来，但 `已花费 —`、`今日 Token —`、角色一直 idle。
+同一地址 `http://127.0.0.1:8791/pet.html` 在 Chrome 里完全正常（`$0.22` / `1.0亿` / `working`）。
+
+取证链：
+
+| 步骤 | 结果 |
+|---|---|
+| 宿主日志加 `webView.url` | `http://127.0.0.1:8791/pet.html` —— 不是 file:// |
+| 给 daemon 加受控请求日志 `PET_LOG_REQUESTS=1` | 请求确实到达：`GET /state`、`/usage`、`/claude-cost` |
+| 403 原因拆解 | `DENY /state origin=null` |
+
+根因：`loadPage()` 先用 `loadFileURL` 显示本地页，探到端口后再 `webView.load(http)`。
+WKWebView 的安全上下文停在 file 那次，之后页面里所有 `fetch` 都带 `Origin: null`，
+被 `pet_daemon._local_request` 按"opaque origin 不能读私有接口"拒绝。
+以前没暴露是因为竞态：file 还没提交就被 http 顶掉，安全上下文没来得及建立。
+
+修复：
+
+- `loadPage()` 先做一次裸 socket 探测（loopback 立即返回），端口通就直接 `loadHTTP()`，
+  **完全不加载本地文件**；
+- 只有独立模式兜底才 `loadFileURL`；之后服务起来要升级，必须 `installWebView()`
+  重建实例并挂回窗口 —— 只换 URL 不换实例，Origin 仍是 null；
+- `pet_daemon` 的 403 记录具体原因（Host / origin=null / cross-site），默认安静，
+  `PET_LOG_REQUESTS=1` 打开。
+
+验证：
+
+| 验证 | 结果 |
+|---|---|
+| `--selftest-save`（位置记忆） | 通过 |
+| 冷启动（daemon 未运行 → 宿主拉起 → 第 2 次探测成功） | 日志出现"从本地文件切到 HTTP → 重建 webView" |
+| 服务端请求 | `/state`、`/usage`、`/claude-cost` 全部 200，无 403 |
+| 真机截屏 | `已花费 $0.22`、`今日 1.1亿 Token`、角色为敲电脑姿态 |
+| `pet-bridge.test.html` / `pet-runtime.test.html` / `pet-wake.test.html` / `pet-metrics.test.html` | 13 / 30 / 11 / 16 项通过 |
+| `python3 -m unittest test_usage` / `pet_sources.test.py` | 23 / 34 项通过 |
+| 源码残留检查 | `web/pet.js` 中 `reset`、`snapHome`、`lastClickAt` 均为 0；`JSERR` 诊断代码已移除 |
+
+限制：`Origin: null` 只在 WKWebView 出现，网页回归（Chrome）抓不到这一层，
+只能靠"宿主日志 + 服务端 403 原因 + 真机截屏"三件一起验。
