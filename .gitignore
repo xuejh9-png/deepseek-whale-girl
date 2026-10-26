@@ -34,3 +34,7 @@ assets/run-12-final/*.png
 
 # 用量面板截图含真实用量数字，不入库（README 已撤掉引用）
 docs/report.png
+
+# Windows 版（Electron）：依赖与打包产物都不入库
+windows/node_modules/
+windows/dist/

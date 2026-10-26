@@ -32,6 +32,7 @@
 | 查 Claude Code 一共花了多少钱 | `python3 claude_cost.py status`，或直接看桌宠顶部的「已花费」 |
 | 让鲸鱼娘浮在桌面上 | 双击 **`启动桌面宠物.command`** —— 首次会自动编译窗口，约 10 秒 |
 | 只想看看她的动画 | 双击 **`pet.html`** —— 不用装任何东西，也不需要 WorkBuddy |
+| **Windows 11 上用** | 见 [`windows/`](windows/README.md)：`cd windows && npm install && npm start`，或 `npm run dist` 打安装包 |
 
 环境要求：**macOS + Python 3**（统计与状态服务只用标准库）。
 只有编译桌面窗口那一步才需要 Swift 命令行工具：`xcode-select --install`。
@@ -403,26 +404,53 @@ WorkBuddy，宠物却永远显示 Codex 那边的“睡着啦”，整张卡就�
 
 ---
 
+## Windows 11 版
+
+同一个前端的第二个宿主：macOS 用 Swift + WKWebView，Windows 用 Electron。
+动画、素材、交互代码完全共用，只有窗口层和取数层各写一份。
+
+```bat
+cd windows
+npm install
+npm start          :: 源码直接跑（需要 Node 18+）
+npm run dist       :: 打安装包（必须在 Windows 上执行）
+```
+
+| | macOS 版 | Windows 11 版 |
+|---|---|---|
+| 数据源 | WorkBuddy + ChatGPT + Claude Code | **只有 Claude Code** |
+| 依赖 | Python 3 + Swift 命令行工具 | 打包后无依赖 |
+| 安装包 | 约 200 KB（原生二进制） | 约 90–120 MB（Electron 运行时） |
+| 退出快捷键 | ⌥⌘Q | Ctrl+Alt+Q |
+| 真机验证 | ✅ | ⚠️ **未验证** —— 只在 macOS 上跑过 Electron |
+
+Windows 版的具体风险（透明窗口可能变黑底、鼠标穿透判定、高 DPI 多屏）写在
+[`windows/README.md`](windows/README.md) 里，第一次在真机上跑请先看那几条。
+
+---
+
 ## 目录结构
 
 ```
 usage_stats.py          用量统计 + 生成报告页
+claude_cost.py          Claude Code 花费：日志 × 价目折算；中转站账单导入/导出
 pet_daemon.py           本地状态服务（薄核心，只负责 HTTP）
 pet_sources.py          状态源适配器（workbuddy / codex / none …）
 pet.html                桌面宠物页面（只有角色）
 web/pet-runtime.js      动画运行时：Sprite 取帧 / 状态机 / 动作队列
 web/pet.js              胶水层：拉状态 + 指针事件 + 宿主通信
 desktop/main.swift      Swift 透明窗口宿主（无边框 / 置顶 / 鼠标穿透 / 全局快捷键）
-assets/pet/             角色素材（10 个 Sprite Sheet + manifest.json / manifest.js）
+windows/                Windows 11 宿主（Electron），与上面共用同一份前端
+assets/pet/             角色素材（9 个 Sprite Sheet + manifest.json / manifest.js）
 
 verify-assets.py        素材逐帧验收（几何 / 循环接缝 / 透明度 / 步幅 / 横向缩放 / 腾空间隔 / 身高起落）
 make-sprite-sheet.py    单姿势图 → 精灵图（抠背景 + 全局统一缩放 + 对齐接地线）★尺寸一致性的保证
 intake-assets.py        素材接收：扫桌面&下载的交付包 → 验收 → 通过才安装（默认只新增不覆盖）
 build-manifest-js.py    manifest.json → manifest.js（让 file:// 也能读到）
 pet-runtime.test.html   动画运行时回归测试（30 项）
-pet-bridge.test.html    宿主 ↔ 网页 桥的回归测试（21 项）
+pet-bridge.test.html    宿主 ↔ 网页 桥的回归测试（13 项）
 pet-wake.test.html      睡着→点醒→起身→再睡 的交互回归（11 项）
-pet_sources.test.py     状态推断回归测试（32 项）
+pet_sources.test.py     状态推断回归测试（34 项）
 docs/                   返工说明 / 对比证据图 / 给制作方的说明
 ```
 
@@ -502,7 +530,8 @@ desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-save
   所以头顶那个 `!` 在 WorkBuddy 下看不到，属**已知限制**，不是坏了。
 - `error` 剪辑的 12 帧里实际只有约 6 个不同姿态（前 3 帧完全相同），
   反应感偏弱，待返工
-- 宠物只支持 macOS（窗口宿主用了 Cocoa + WKWebView）
+- **宿主分两套**：macOS 用 Swift + WKWebView（`desktop/`，已验证）；
+  Windows 用 Electron（`windows/`，真机未验证，见该目录 README 的标注）；Linux 没做。
 - 中转站在线账单尚未接入，费用需导入真实导出；缺失时显示 `—`。
 
 > 关于验收：`verify-assets.py` 会同时回答两个问题 ——

@@ -1,0 +1,64 @@
+{
+  "name": "workbuddy-pet-windows",
+  "version": "1.0.0",
+  "private": true,
+  "description": "桌面宠物（Windows 11 / Electron）—— 读 Claude Code 本地日志，显示状态、今日 token 与累计花费",
+  "main": "main.js",
+  "author": "xuejh9-png",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test-claude-code.js",
+    "dist": "electron-builder --win --x64",
+    "dist:portable": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.xuejh.workbuddy.pet",
+    "productName": "WorkBuddyPet",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "server.js",
+      "claude-code.js",
+      "pricing.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../pet.html",
+        "to": "app-assets/pet.html"
+      },
+      {
+        "from": "../web",
+        "to": "app-assets/web"
+      },
+      {
+        "from": "../assets/pet",
+        "to": "app-assets/assets/pet"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "桌面宠物"
+    }
+  }
+}
