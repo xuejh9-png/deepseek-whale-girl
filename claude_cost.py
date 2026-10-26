@@ -275,31 +275,40 @@ def spend_snapshot(path=None, now=None):
     total = today = month = 0.0
     calls = today_calls = 0
     tokens = today_tokens = 0
+    unpriced = 0
     first = last = None
     try:
         rows = list(iter_claude_calls())
     except (OSError, ValueError, TypeError):
         rows = []
     for r in rows:
-        price = price_of(r.get('model'), table)
-        if price is None:
-            continue
-        cost = (r['input'] * price[0] + r['completion'] * price[1]
-                + r['cacheRead'] * price[2] + r['cacheCreation'] * price[3]) / 1000000.0
         when = r['when']
-        total += cost
-        calls += 1
+        is_today = when.date() == now.date()
+        # ⚠️ token 与调用次数**不依赖价格表**。
+        # 以前 price is None 就整条 continue，模型一旦没进价目表，
+        # 它的 token 和调用次数也一起消失 —— 卡片上的「今日 Token」会莫名少一块，
+        # 而用户完全看不出是价目表缺条目。金额可以缺，计数不能缺。
         tokens += r['total']
-        if when.date() == now.date():
-            today += cost
-            today_calls += 1
+        calls += 1
+        if is_today:
             today_tokens += r['total']
-        if (when.year, when.month) == (now.year, now.month):
-            month += cost
+            today_calls += 1
         if first is None or when < first:
             first = when
         if last is None or when > last:
             last = when
+
+        price = price_of(r.get('model'), table)
+        if price is None:
+            unpriced += 1
+            continue
+        cost = (r['input'] * price[0] + r['completion'] * price[1]
+                + r['cacheRead'] * price[2] + r['cacheCreation'] * price[3]) / 1000000.0
+        total += cost
+        if is_today:
+            today += cost
+        if (when.year, when.month) == (now.year, now.month):
+            month += cost
 
     amount = round(total, 4)
     # 价目来源要写清楚：别人机器上通常没有 CC Switch，
@@ -319,6 +328,8 @@ def spend_snapshot(path=None, now=None):
         'today': {'USD': str(round(today, 4))},
         'month': {'USD': str(round(month, 4))},
         'requests': calls, 'todayRequests': today_calls,
+        # 有多少次调用因为模型不在价目表里而没算进金额（token 仍然算进去了）
+        'unpricedRequests': unpriced,
         'tokens': {'total': tokens, 'today': today_tokens},
     }
 
@@ -340,9 +351,45 @@ def import_ledger(source, destination=None):
             os.unlink(temporary)
 
 
+def detail(now=None):
+    """逐笔列出每次调用的四个分量与折算金额 —— 质疑"数字不准"时先看这个。
+
+    只读本机日志，不联网、不读账单；每行对应 Claude Code 日志里一条 message.id
+    （同一条 message 的多次流式写入已按最大值去重）。
+    """
+    now = now or dt.datetime.now().astimezone()
+    table = price_table()
+    rows = sorted(iter_claude_calls(), key=lambda r: r['when'])
+    print(f"{'时间':16s}  {'模型':26s} {'输入':>8s} {'输出':>7s} {'缓存写':>8s} {'缓存读':>9s} {'合计':>9s}  金额")
+    total_cost = 0.0
+    unpriced = 0
+    for r in rows:
+        price = price_of(r['model'], table)
+        if price is None:
+            cost_text = '—（价目表没有这个型号）'
+            unpriced += 1
+        else:
+            cost = (r['input'] * price[0] + r['completion'] * price[1]
+                    + r['cacheRead'] * price[2] + r['cacheCreation'] * price[3]) / 1000000.0
+            total_cost += cost
+            cost_text = '$%.4f' % cost
+        if r['when'].date() == now.date():
+            cost_text += '  ← 今天'
+        print(f"{r['when']:%Y-%m-%d %H:%M}  {r['model'][:26]:26s} "
+              f"{r['input']:>8,} {r['completion']:>7,} {r['cacheCreation']:>8,} {r['cacheRead']:>9,} "
+              f"{r['total']:>9,}  {cost_text}")
+    print()
+    print(f"合计 {len(rows)} 次调用 · {sum(r['total'] for r in rows):,} token · ${total_cost:.4f}")
+    if unpriced:
+        print(f"其中 {unpriced} 次因为型号不在价目表里没有金额（token 仍然计入合计）")
+    print(f"价目来源：{'CC Switch（%s）' % _pricing_path() if os.path.exists(_pricing_path()) else '内置公开价目'}")
+    print("口径：输入 / 输出 / 缓存写 / 缓存读 四条分量分别计价；"
+          "缓存读单价约为输入的 1/10，所以上亿 token 也可能只有几毛钱。")
+
+
 def main():
     parser = argparse.ArgumentParser(description='中转站账单本地导入/导出（不联网）')
-    parser.add_argument('action', choices=('import', 'export', 'status'))
+    parser.add_argument('action', choices=('import', 'export', 'status', 'detail'))
     parser.add_argument('file', nargs='?')
     args = parser.parse_args()
     try:
@@ -357,6 +404,8 @@ def main():
             # Export is deliberately explicit and uses private file permissions.
             import_ledger(LEDGER_PATH, args.file)
             print('已导出标准化账单，请勿提交到公共仓库。')
+        elif args.action == 'detail':
+            detail()
         else:
             # status 给"实际会显示的那个数"：有核对过的账单就是账单，
             # 没有就按本机日志 × 单价折算。只打 snapshot() 的话，

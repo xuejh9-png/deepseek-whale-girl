@@ -155,25 +155,35 @@ async function costSnapshot(now = new Date()) {
   let todayTokens = 0;
   let calls = 0;
   let todayCalls = 0;
+  let unpriced = 0;
   let first = null;
   let last = null;
 
   for (const row of rows) {
-    const price = priceOf(row.model, table);
-    if (!price) continue;
     const [inp, out, creation, read] = row.counts;
-    const amount = (inp * price[0] + out * price[1] + read * price[2] + creation * price[3]) / 1e6;
+    const rowTokens = inp + out + creation + read;
     const when = new Date(row.ts);
-    total += amount;
+    const isToday = sameDay(when, now);
+
+    // ⚠️ token 与调用次数不依赖价目表：模型没进价目表也要如实计数，
+    // 否则「今日 Token」会莫名少一块，用户只会觉得数字不准。
+    tokens += rowTokens;
     calls += 1;
-    tokens += inp + out + creation + read;
-    if (sameDay(when, now)) {
-      today += amount;
+    if (isToday) {
+      todayTokens += rowTokens;
       todayCalls += 1;
-      todayTokens += inp + out + creation + read;
     }
     if (!first || row.ts < first.ts) first = { ts: row.ts, when };
     if (!last || row.ts > last.ts) last = { ts: row.ts, when };
+
+    const price = priceOf(row.model, table);
+    if (!price) {
+      unpriced += 1;
+      continue;
+    }
+    const amount = (inp * price[0] + out * price[1] + read * price[2] + creation * price[3]) / 1e6;
+    total += amount;
+    if (isToday) today += amount;
   }
 
   const round = (n) => Math.round(n * 1e4) / 1e4;
@@ -195,6 +205,8 @@ async function costSnapshot(now = new Date()) {
     month: { USD: String(round(total)) },
     requests: calls,
     todayRequests: todayCalls,
+    // 有多少次调用因为模型不在价目表里而没算进金额（token 仍然算进去了）
+    unpricedRequests: unpriced,
     tokens: { total: tokens, today: todayTokens },
   };
 }

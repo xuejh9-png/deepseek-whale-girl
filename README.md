@@ -226,7 +226,8 @@ Claude Code 按 message/request ID 去重，同一流式消息取各用量字段
 
 ```bash
 python3 claude_cost.py import /path/outside/repo/relay-export.json
-python3 claude_cost.py status
+python3 claude_cost.py status      # 一行看总额
+python3 claude_cost.py detail      # 逐笔明细：四分量 + 单笔金额，用来核对
 python3 claude_cost.py export /path/outside/repo/normalized-export.json
 ```
 
