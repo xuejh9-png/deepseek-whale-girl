@@ -213,17 +213,56 @@ function write(dir, lines, name = 'sess-demo.jsonl') {
     ok('金额大于 0', c.amount > 0, c.amount);
   }
 
+  console.log('三个来源的解析：');
+
+  {
+    const { parseWorkbuddy, parseCodex } = require('./sources');
+
+    // WorkBuddy：一行一次调用，token 在 providerData.rawUsage 里
+    const wbLine = JSON.stringify({
+      timestamp: Date.now(),
+      providerData: {
+        requestModelName: 'Deepseek-V4.1-Flash',
+        rawUsage: { prompt_tokens: 1000, completion_tokens: 200, total_tokens: 1200 },
+      },
+    });
+    const wb = parseWorkbuddy(`${wbLine}\n`);
+    ok('WorkBuddy 行能解析出 prompt/completion/total',
+      wb.length === 1 && wb[0].prompt === 1000 && wb[0].completion === 200 && wb[0].total === 1200, wb);
+    ok('WorkBuddy 没写 total 时用 prompt+completion',
+      parseWorkbuddy(JSON.stringify({
+        timestamp: Date.now(),
+        providerData: { rawUsage: { prompt_tokens: 10, completion_tokens: 5 } },
+      }))[0].total === 15);
+
+    // ChatGPT/Codex：turn_context 给模型，token_usage_record 给用量
+    const codexText = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 't1', model: 'gpt-5.6-luna' } }),
+      JSON.stringify({
+        type: 'token_usage_record',
+        timestamp: new Date().toISOString(),
+        payload: { response_id: 'resp-1', turn_id: 't1', usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } },
+      }),
+    ].join('\n');
+    const cx = parseCodex(codexText);
+    ok('Codex 把 turn_id 映射到模型', cx.turns.get('t1') === 'gpt-5.6-luna', [...cx.turns]);
+    ok('Codex 收到 1 条用量记录', cx.records.length === 1, cx.records.length);
+    ok('Codex 用量字段读对', cx.records[0].payload.usage.total_tokens === 150, cx.records[0].payload.usage);
+  }
+
   console.log('今日口径：');
 
   {
     const dir = tmpdir();
     write(dir, [assistant({ ago: 5 })]);
-    const cc = load(dir);
-    const u = await cc.usageSnapshot();
-    ok('今日 token 有值', u.today.totalTokens > 0, u.today.totalTokens);
-    ok('bySource.claude 与总额一致',
-      u.today.bySource.claude.totalTokens === u.today.totalTokens, u.today.bySource);
-    ok('complete=true（她的世界里只有 Claude 一个来源）', u.today.complete === true, u.today.complete);
+    load(dir);
+    const src = require('./sources');
+    const u = await src.usageSnapshot();
+    ok('三个来源都在结果里', ['workbuddy', 'codex', 'claude']
+      .every((k) => k in u.today.bySource), Object.keys(u.today.bySource));
+    ok('总额 = 三源之和', u.today.totalTokens
+      === Object.values(u.today.bySource).reduce((sum, v) => sum + (v.totalTokens || 0), 0),
+      u.today.totalTokens);
   }
 
   console.log('鼠标穿透命中区：');

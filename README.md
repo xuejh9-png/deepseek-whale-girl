@@ -418,7 +418,7 @@ npm run dist       :: 打安装包（必须在 Windows 上执行）
 
 | | macOS 版 | Windows 11 版 |
 |---|---|---|
-| 数据源 | WorkBuddy + ChatGPT + Claude Code | **只有 Claude Code** |
+| 数据源 | WorkBuddy + ChatGPT + Claude Code | 三个都接（同一份解析口径） |
 | 依赖 | Python 3 + Swift 命令行工具 | 打包后无依赖 |
 | 安装包 | 约 200 KB（原生二进制） | 约 90–120 MB（Electron 运行时） |
 | 退出快捷键 | ⌥⌘Q | Ctrl+Alt+Q |

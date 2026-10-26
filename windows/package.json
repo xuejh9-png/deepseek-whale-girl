@@ -27,7 +27,9 @@
       "preload.js",
       "server.js",
       "claude-code.js",
+      "sources.js",
       "pricing.js",
+      "hitbox.js",
       "package.json"
     ],
     "extraResources": [

@@ -12,11 +12,10 @@
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
-| 数据层（状态 / 今日 token / 花费） | ✅ 已验证 | `node test-claude-code.js` **27 项**断言；与 macOS 版逐项对账，金额 0.224 / 5 次调用 / 82641 token 完全一致 |
+| 数据层（状态 / 今日 token / 花费） | ✅ 已验证 | `node test-claude-code.js` **31 项**断言；与 macOS 版逐项对账，金额 0.224 / 5 次调用 / 82641 token 完全一致 |
 | 前端复用（动画、双击反应、卡片） | ✅ 已验证 | 同一份 `web/` 代码，在 Electron 里实际跑过 |
 | 窗口创建 / 位置记忆 / 菜单 / 快捷键 | ✅ 已验证（macOS 上跑 Electron） | 实际启动后窗口正常渲染、数据加载成功，见下方「本机实跑记录」 |
 | **Windows 11 真机表现** | ⚠️ **未验证** | 透明窗口、鼠标穿透、任务栏隐藏、多屏缩放都只在 macOS 上跑过 |
-| WorkBuddy / ChatGPT 两个数据源 | ❌ 未接入 | 只有 Claude Code，见下 |
 | 打包成 .exe 安装包 | ⚠️ 未验证 | 需要在 Windows 上执行 `npm run dist`，脚本已配好 |
 
 **别把"没报错"当成"Windows 上一定正常"**。下面「已知风险」列了大概率要调的地方。
@@ -33,12 +32,12 @@
 | 接口 | 实测返回 |
 |---|---|
 | `/health` | `{"ok":true,"version":"win-1.0","source":"claude"}` |
-| `/state` | `state=sleeping`（Claude 日志 3.5 小时没写，判定正确） |
+| `/state` | `state=working, source=workbuddy`（与 macOS 版同一结论：取活跃的那个源） |
 | `/claude-cost` | `amount=0.224, requests=5` —— 与同一台机器上 Python 版**逐项相同** |
-| `/usage` | `totalTokens=12957, complete=true` |
+| `/usage` | `totalTokens=162,997,022`（WorkBuddy 133.8M + ChatGPT 29.2M + Claude 12,957），`complete=true` |
 | `/pet.html` | 200，1661 字节 |
 
-窗口侧：透明背景生效（能看见桌面）、角色动画在跑、卡片显示「已花费 $0.22 / 今日 1.3万 Token」。
+窗口侧：透明背景生效（能看见桌面）、角色动画在跑、卡片显示「已花费 $0.22 / 今日 1.6亿 Token」。
 
 > 这些都是在 **macOS 上跑 Electron** 得到的。Windows 11 的窗口行为（透明、穿透、任务栏）
 > 仍然是未验证项 —— Electron 的 API 一样，但驱动和 DWM 不一样。
@@ -47,17 +46,24 @@
 
 ## 它读什么
 
-只有一处数据源：**Claude Code 的本地会话日志**
+三处本地日志，和 macOS 版同口径：
 
-```
-C:\Users\<你>\.claude\projects\**\*.jsonl
-```
+| 来源 | Windows 路径 | 读什么 |
+|---|---|---|
+| WorkBuddy | `C:\Users\<你>\.workbuddy\projects\*\*.jsonl` | `providerData.rawUsage` 的 prompt / completion |
+| ChatGPT | `C:\Users\<你>\.codex\sessions\YYYY\MM\DD\*.jsonl` | `token_usage_record`，按 `response_id` 去重 |
+| Claude Code | `C:\Users\<你>\.claude\projects\**\*.jsonl` | `message.usage`，按 `message.id` 去重 |
 
-- 状态（执行中 / 思考中 / 刚完成 / 睡着）：看最近一条记录的类型与时间
-- 今日 token：按本机自然日聚合
-- 已花费：本机能读到的**全部历史**，按模型单价折算
+对应三种显示：
 
-路径可以用环境变量覆盖：
+- **今日 token（底部）**：三个来源分别统计再相加；点一下轮换单来源，悬停看精确数字
+- **已花费（顶部）**：只有 Claude Code —— 另外两家的日志里没有价格信息，算不出钱
+- **动画状态**：WorkBuddy 和 Claude Code 各取一份，选「最活跃 + 最后动过」的那个
+
+**目录不存在就跳过**，不报错也不编数字，缺失的来源显示成 `—`。
+所以哪怕只装了其中一个工具，其余部分照常工作。
+
+路径可以覆盖：
 
 ```bat
 set PET_CLAUDE_DIR=D:\somewhere\.claude\projects
@@ -118,14 +124,10 @@ npm run dist:portable
 |---|---|---|
 | 窗口宿主 | Swift + WKWebView（`desktop/main.swift`） | Electron（`main.js`） |
 | 数据服务 | Python `pet_daemon.py`，常驻进程 | Node 内置 HTTP 服务（`server.js`），随窗口启停 |
-| 数据源 | WorkBuddy + ChatGPT + Claude Code | **只有 Claude Code** |
+| 数据源 | WorkBuddy + ChatGPT + Claude Code | 三个都接，与左边一致 |
 | 依赖 | Python 3 + Swift 命令行工具 | 打包后无依赖；源码跑需要 Node |
 | 安装包体积 | 约 200 KB（原生二进制） | **约 90–120 MB**（Electron 运行时） |
 | 退出快捷键 | ⌥⌘Q | Ctrl+Alt+Q |
-
-Windows 版没接 WorkBuddy / ChatGPT 的原因很直接：`usage_stats.py` 里那套解析
-（两套累计账本、增量缓存、多任务心跳）重写成 JS 的成本远高于收益，
-而这两个工具本身也不在 Windows 上跑。**这是明确的功能缺失，不是 bug。**
 
 ---
 
@@ -162,7 +164,8 @@ windows/
   hitbox.js            命中区判定（Y 轴原点翻转单独抽出来，好回归）
   preload.js           把网页用的 window.webkit.messageHandlers.petHost 接到 Electron IPC
   server.js            内置 HTTP 服务：/state /usage /claude-cost + 静态资源
-  claude-code.js       读日志 → 状态 / 今日 token / 花费（与 macOS 版同口径）
+  claude-code.js       Claude Code：读日志 → 状态 / 花费（与 macOS 版同口径）
+  sources.js           三源合一：今日 token 合计、WorkBuddy 状态、合并状态
   pricing.js           价目表 + 型号匹配（与 claude_cost.py 同一份数据）
   test-claude-code.js  回归：状态 / 去重 / 计价 / 命中区，纯 Node 跑，不需要 Electron
   package.json         electron-builder 配置（extraResources 把 ../web 和 ../assets/pet 打进去）

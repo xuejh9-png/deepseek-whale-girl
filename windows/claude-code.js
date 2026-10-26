@@ -199,25 +199,6 @@ async function costSnapshot(now = new Date()) {
   };
 }
 
-/** 今日 token —— 只有 Claude Code 一个来源 */
-async function usageSnapshot(now = new Date()) {
-  const snap = await costSnapshot(now);
-  const todayTokens = snap.tokens.today;
-  return {
-    today: {
-      dayLocal: dayKey(now),
-      totalTokens: todayTokens,
-      // 前两个来源在 Windows 版没有接入 —— 给空对象而不是 null，
-      // 免得前端 (today.bySource[key] || {}).totalTokens 拿到 null 再取属性
-      bySource: { workbuddy: {}, codex: {}, claude: { totalTokens: todayTokens } },
-      // Windows 版只接 Claude Code，对她而言这个口径就是完整的；
-      // 标 true 是为了别在卡片上挂一个永远去不掉的星号
-      complete: true,
-      note: 'Windows 版当前只接 Claude Code；WorkBuddy / ChatGPT 源尚未接入',
-    },
-  };
-}
-
 /** 读文件末尾若干行（只为了看"最后发生了什么"，不需要全文） */
 async function readTail(file, maxLines = 200, maxBytes = 600000) {
   let handle;
@@ -335,5 +316,5 @@ async function stateSnapshot(now = new Date()) {
 
 module.exports = {
   CLAUDE_PROJECTS, LABELS,
-  isClaudeModel, collect, costSnapshot, usageSnapshot, stateSnapshot,
+  isClaudeModel, collect, costSnapshot, stateSnapshot,
 };
