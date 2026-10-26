@@ -69,3 +69,16 @@ web/pet.js、web/pet.css、pet-metrics.test.html、test_usage.py、README.md、�
 assets/pet/manifest.json、assets/pet/manifest.js、pet-bridge.test.html、pet-runtime.test.html、
 pet_sources.py、pet_sources.test.py、README.md、docs/2026-10-26-移除跑步动作.md、本文件、验证记录。
 验证结果见 docs/issue-1-validation.md 的「2026-10-26 16:22 追加」一节。
+
+## 2026-10-26 16:38 接续（用户口头追加，已完成）
+
+用户：「为什么双击它还是会回到这个右下角？这个功能也删掉」。
+
+原因：归位落点就是 `homeOrigin()` = 鼠标所在屏幕的右下角。跑步删掉后归位只剩"换位置"作用。
+
+删除：`snapHome()`、`case "reset"`、⌥⌘H 注册、`snapHomeSelfTest()`、`--selftest-home`、
+网页右键分支与双击识别（`lastClickAt`/`isDbl`）。
+现在：拖动 = 移动；双击 = 点击反应；右键 = 无动作；长按 0.8 秒 = 退出菜单；⌥⌘Q = 退出。
+
+改动文件：desktop/main.swift、web/pet.js、pet-bridge.test.html、README.md、
+docs/2026-10-26-移除跑步动作.md、本文件、验证记录。

@@ -107,17 +107,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 用户反馈它破坏观感 —— 改成全局快捷键：
     // 用 Carbon 注册，**不需要窗口获得焦点**，所以不会把你正在用的窗口抢走。
     //
-    // ⌥⌘Q 退出 ／ ⌥⌘H 归位（瞬时到位，不播跑动）
+    // ⌥⌘Q 退出。
     //
-    // ⚠️ 保留 ⌥⌘H 的原因：鼠标那条路依赖"窗口此刻吃不吃鼠标事件"，
-    // 一旦穿透判定出问题，就点不动她、用户完全不知道该怎么办。
-    // 键盘这条路不经过鼠标命中测试，是**必然可用**的兜底。
+    // ⚠️ 键盘这条路的唯一用途：鼠标判定出问题时（穿透卡住、点不动她），
+    // 仍有一个不经过鼠标命中测试的退出口。
 
     func installHotKeys() {
         registerHotKey(id: 1, key: UInt32(kVK_ANSI_Q), label: "⌥⌘Q 退出") { NSApp.terminate(nil) }
-        registerHotKey(id: 2, key: UInt32(kVK_ANSI_H), label: "⌥⌘H 归位") { [weak self] in
-            self?.snapHome()
-        }
     }
 
     func registerHotKey(id: UInt32, key: UInt32, label: String,
@@ -230,30 +226,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set([Double(o.x), Double(o.y)], forKey: originKey)
     }
 
-    // MARK: 自检（--selftest-home）
-    //
-    // 归位是"宿主把窗口挪回默认位"，在无头环境里没法用鼠标点出来验证 —— 所以留一个入口：
-    // 先把窗口挪到明显偏离的位置，再调用一次归位，断言落点就是默认位。
-    //
-    //   desktop/WorkBuddyPet.app/Contents/MacOS/WorkBuddyPet --selftest-home
-
-    func snapHomeSelfTest() {
-        selfTesting = true
-        let home = clampOrigin(homeOrigin())
-
-        // 先挪到一个明显偏离的位置（左侧 320px、上方 40px）
-        window.setFrameOrigin(clampOrigin(NSPoint(x: home.x - 320, y: home.y + 40)))
-        let from = window.frame.origin
-        snapHome()
-        let end = window.frame.origin
-        let landed = abs(end.x - home.x) < 1.0 && abs(end.y - home.y) < 1.0
-        NSLog(String(format: "WorkBuddyPetSELFTEST: from=(%.1f,%.1f) end=(%.1f,%.1f) "
-                     + "home=(%.1f,%.1f) landed=%@ BAD=%ld",
-                     from.x, from.y, end.x, end.y, home.x, home.y,
-                     landed ? "Y" : "N", landed ? 0 : 1))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.terminate(nil) }
-    }
-
     /// 把 UserDefaults 取出的元素转成 Double。
     /// ⚠️ 四条路都要留着，缺一条就会静默丢位置：
     ///   `as? [Double]` 整体转型 → 元素是整数/字符串时直接失败
@@ -293,23 +265,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return nil
         }
         return p
-    }
-
-    // MARK: 归位
-    //
-    // 原来这里是「跑回去」：60fps 定时器逐步挪窗口 + 网页播 run 剪辑 + 折返翻方向。
-    // 2026-10-26 用户要求「跑步这个动作不要出现，化繁为简」—— 整段已删除，
-    // 归位保留，但改成一次 setFrameOrigin 直接到位。
-    //
-    // 为什么保留归位：防丢机制（拖不出屏幕、记住位置）只保证"丢不了"，
-    // 不保证"好找"。拖到只剩 48px 在屏内时，一个回到默认位的入口仍然必要。
-
-    func snapHome() {
-        dragging = false
-        let home = clampOrigin(homeOrigin())
-        window.setFrameOrigin(home)
-        saveOrigin()
-        petLog("归位 → x=\(Int(home.x)) y=\(Int(home.y))")
     }
 
     // MARK: 载入
@@ -527,11 +482,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             saveOrigin()                      // 记住这次放的位置
             updatePassthrough()
 
-        case "reset":
-            // 双击 / 右键她 = 归位（瞬时到位，不播跑动）。
-            // 用户要求"跑动不要出现在菜单里"，所以改成直接手势触发。
-            snapHome()
-
         case "menu":
             dragging = false
             // 网页那边右键和 contextmenu 都可能报一次 → 300ms 内只弹一个菜单
@@ -554,8 +504,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     //   · 删掉「当前：…」—— 看不太懂，不如不给
     //   · 删掉「跑一下」—— 放在菜单里"看起来很呆"
     //   · 删掉「置顶显示」—— 她就该一直置顶，不需要开关
-    // 归位改由**直接手势**触发（双击 / 右键），不经菜单：
-    // 见 handle(cmd: "reset")。菜单只留退出，作为"关掉她"的鼠标兜底。
+    // 菜单只留退出，作为"关掉她"的鼠标兜底。
+    // 2026-10-26 用户要求把「归位」也删掉：双击/右键她不再做任何位置调整。
 
     func showMenu() {
         let menu = NSMenu()
@@ -584,9 +534,6 @@ let delegate = AppDelegate()
 let argv = CommandLine.arguments
 if let i = argv.firstIndex(of: "--url"), i + 1 < argv.count {
     delegate.baseURL = argv[i + 1]
-}
-if argv.contains("--selftest-home") {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { delegate.snapHomeSelfTest() }
 }
 // 写入一次当前位置并退出 —— 用于验证「程序自己写、程序自己读」这条往返链路
 // （不要用 `defaults write` 造测试数据：它会把数字存成字符串，验的不是真实链路）

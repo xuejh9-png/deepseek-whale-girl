@@ -73,16 +73,13 @@ window.fetch = function () { return Promise.reject(new Error('offline')); };
     ok('页面能把指令发给宿主（点一下 → 宿主收到 clicked）',
        lastCmd() === 'clicked', cmds().join(','));
 
-    // ---- 网页 → 宿主：右键 / 双击 = 复位（不弹菜单）----
-    // 回归①：contextmenu 在 WKWebView 里**不触发**（日志证据：用户的点击一堆，
-    //        menu 一次都没有），所以右键改由 pointerdown 的 button===2 触发。
-    // 回归②：用户要求"跑动不要出现在菜单里"→ 双击/右键都应该是**直接复位**，
-    //        而不是去开菜单。
+    // ---- 网页 → 宿主：右键 / 双击 不再触发归位 ----
+    // 2026-10-26 用户要求把「归位」也删掉：她只待在你放下的地方，
+    // 双击 / 右键都不再让窗口回到默认位（默认位就是屏幕右下角）。
     clear();
     ptr('pointerdown', 40, 40, 2);
-    ok('右键发出 reset 指令（复位，不是开菜单）', lastCmd() === 'reset', cmds().join(','));
-    ok('右键不应弹菜单', cmds().indexOf('menu') === -1, cmds().join(','));
-    ok('右键不应被当成拖拽', cmds().indexOf('dragBegin') === -1, cmds().join(','));
+    ok('右键不触发归位', cmds().indexOf('reset') === -1, cmds().join(','));
+    ok('右键不被当成拖拽', cmds().indexOf('dragBegin') === -1, cmds().join(','));
 
     // ---- 网页 → 宿主：单击 / 双击 / 拖拽 ----
     wait(450, function () {                       // 先隔开，避免和上一次算双击
@@ -92,9 +89,9 @@ window.fetch = function () { return Promise.reject(new Error('offline')); };
 
       clear();
       click();                                    // 双击的第一下
-      click();                                    // 第二下 → 复位
-      ok('双击发出 reset 指令（复位）', lastCmd() === 'reset', cmds().join(','));
-      ok('双击不弹菜单', cmds().indexOf('menu') === -1, cmds().join(','));
+      click();                                    // 第二下
+      ok('双击不再触发归位（只是点击反应）', cmds().indexOf('reset') === -1, cmds().join(','));
+      ok('双击仍然会发出 clicked', cmds().indexOf('clicked') !== -1, cmds().join(','));
 
       clear();
       ptr('pointerdown', 40, 40);

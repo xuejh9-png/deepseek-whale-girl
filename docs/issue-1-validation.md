@@ -155,3 +155,26 @@
   `AXError.notImplemented`。网页手势回归与真机自动复位通过，不将其替代完整手工验收。
 - 本机自然日按系统时区；只有本机可读日志的用量可统计，不等同账户全部设备用量。
 - 本轮改动已提交并推送；任务开始前的既有改动一并入库，范围见 CURRENT_TASK.md。
+
+### 4. 归位删除（同日 16:38 追加）
+
+用户：「为什么双击它还是会回到这个右下角？这个功能也删掉」。
+
+`homeOrigin()` 的定义就是**屏幕右下角**（鼠标所在屏的右下角），所以"双击归位"表现为
+"双击就瞬移到右下角"—— 这不是 bug，是设计；跑步删掉后归位只剩这一个作用，用户不需要。
+
+删除范围：
+
+| 位置 | 内容 |
+|---|---|
+| `desktop/main.swift` | `snapHome()`、`case "reset"`、⌥⌘H 注册、`snapHomeSelfTest()`、`--selftest-home` 入口 |
+| `web/pet.js` | 右键分支 `button === 2 → tell('reset')`、双击识别 `lastClickAt` / `isDbl` |
+| `pet-bridge.test.html` | 「右键/双击发出 reset」改为「不再触发归位」 |
+
+保留：拖动移动、位置记忆、拖动夹边界、长按 0.8 秒退出菜单、⌥⌘Q 退出。
+
+验证：`zsh desktop/build.sh` 通过；`pet-bridge.test.html` 13 项通过
+（断言改为"右键不含 reset""双击不含 reset 且仍有 clicked"）；
+源码中 `reset` / `snapHome` / `lastClickAt` 计数均为 0。
+
+仍未覆盖：双击手感（是否完全无位移）需用户手点确认；自动化只能证明没有发出归位指令。
