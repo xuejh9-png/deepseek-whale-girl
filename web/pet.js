@@ -83,31 +83,19 @@
   /* ---------------- 状态拉取 ---------------- */
 
   var timer = null;
-  var taskButton = document.getElementById('petTasks');
   var tokenButton = document.getElementById('petTokens');
   var costLabel = document.getElementById('petCost');
   var tasks = [], selectedId = null, lastAgent = {}, today = null, tokenView = 0;
   var metricsAt = 0, metricsDay = '', metricsBusy = false, metricsLoaded = false;
   var sourceNames = {workbuddy: 'WB', codex: 'Codex', claude: 'Claude'};
 
+  /* 卡片上不再显示任务数 / 任务名（用户明确要求删掉）。
+     任务仍然参与状态选择：优先观察「正在干活」的那个，让动画跟对人。 */
   function showTask() {
     var selected = tasks.filter(function (t) { return t.id === selectedId; })[0];
     var agent = selected || lastAgent;
     anim.setState(effectiveState(agent.state));
-    if (!taskButton) return;
-    taskButton.hidden = !tasks.length;
-    taskButton.textContent = tasks.length + ' 项任务';
-    taskButton.title = selected ? (tasks.indexOf(selected) + 1) + '/' + tasks.length + ' · '
-      + selected.label + '\n' + (selected.task || '暂无任务文字') + '\n' + (selected.cwd || '')
-      + '\n点击切换观察任务' : '点击切换观察任务';
   }
-
-  if (taskButton) taskButton.addEventListener('click', function () {
-    if (!tasks.length) return;
-    var index = tasks.findIndex(function (t) { return t.id === selectedId; });
-    selectedId = tasks[(index + 1) % tasks.length].id;
-    showTask();
-  });
 
   function shortNumber(n) {
     if (n == null) return '—';
