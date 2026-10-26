@@ -55,7 +55,9 @@ OUT_HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "用量报�
 # 顺序 = 图例从左到右 = 柱子里分段自上而下（柱是 column flex，第一个子元素在最上面）。
 SRC_CODEX = "ChatGPT"
 SRC_DEEPSEEK = "DeepSeek"
-CLAUDE_PROJECTS = os.path.expanduser("~/.claude/projects")
+# Claude Code 的会话日志目录。默认 ~/.claude/projects；
+# 装在别处/容器里/换过 CLAUDE_CONFIG_DIR 的机器可以用 PET_CLAUDE_DIR 指过来。
+CLAUDE_PROJECTS = os.path.expanduser(os.environ.get("PET_CLAUDE_DIR") or "~/.claude/projects")
 SRC_CLAUDE = "Claude Code"
 SRC_OTHER = "其他模型"
 SOURCE_ORDER = (SRC_DEEPSEEK, SRC_CODEX, SRC_CLAUDE, SRC_OTHER)   # 图例顺序 = 柱内分段自上而下

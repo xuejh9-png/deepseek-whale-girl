@@ -25,24 +25,73 @@ SOURCE = '本地导入：中转站导出账单'
 
 # CC Switch 的单价表就在本机；用户看的就是同一个面板，口径必须一致。
 CC_PRICING = os.path.expanduser('~/.cc-switch/model-pricing.json')
+# 允许指定自己的价目表：别人机器上没有 CC Switch，也能用自家价格。
+PRICING_ENV = 'PET_CLAUDE_PRICING'
 
-# 兜底（美元 / 每百万 token）：输入、输出、缓存读、缓存写。
+# 兜底价目（美元 / 每百万 token）：输入、输出、缓存读、缓存写。
+# ⚠️ 最后两个的顺序是「读、写」，和 Anthropic 官网表格的列序不同，照抄会算错一半。
+# 5.x 一档对齐 CC Switch 面板（用户看的就是那个数）；
+# 4.x 及更早用 Anthropic 公开价，让没装 CC Switch 的机器也能算出金额。
 FALLBACK_PRICES = {
-    'claude-opus-5-5': (4.0, 20.0, 0.2, 5.0),
-    'claude-opus-5': (5.0, 25.0, 0.5, 6.25),
+    'claude-fable-5-1':  (10.0, 50.0, 0.25, 12.5),
+    'claude-fable-5':    (10.0, 50.0, 1.0, 12.5),
+    'claude-opus-5-5':   (4.0, 20.0, 0.2, 5.0),
+    'claude-opus-5':     (5.0, 25.0, 0.5, 6.25),
     'claude-sonnet-5-5': (2.0, 10.0, 0.1, 2.5),
-    'claude-sonnet-5': (2.0, 10.0, 0.2, 2.5),
-    'claude-haiku-5-5': (0.1, 0.5, 0.01, 0.125),
+    'claude-sonnet-5':   (2.0, 10.0, 0.2, 2.5),
+    'claude-haiku-5-5':  (0.1, 0.5, 0.01, 0.125),
+    'claude-opus-4-8':   (5.0, 25.0, 0.5, 6.25),
+    'claude-opus-4-7':   (5.0, 25.0, 0.5, 6.25),
+    'claude-opus-4-6':   (5.0, 25.0, 0.5, 6.25),
+    'claude-opus-4-5':   (5.0, 25.0, 0.5, 6.25),
+    'claude-opus-4-1':   (15.0, 75.0, 1.5, 18.75),
+    'claude-opus-4':     (15.0, 75.0, 1.5, 18.75),
+    'claude-opus-3':     (15.0, 75.0, 1.5, 18.75),
+    'claude-sonnet-4-6': (3.0, 15.0, 0.3, 3.75),
+    'claude-sonnet-4-5': (3.0, 15.0, 0.3, 3.75),
+    'claude-sonnet-4':   (3.0, 15.0, 0.3, 3.75),
+    'claude-sonnet-3-7': (3.0, 15.0, 0.3, 3.75),
+    'claude-sonnet-3-5': (3.0, 15.0, 0.3, 3.75),
+    'claude-haiku-4-5':  (1.0, 5.0, 0.1, 1.25),
+    'claude-haiku-3-5':  (0.8, 4.0, 0.08, 1.0),
+    'claude-haiku-3':    (0.25, 1.25, 0.03, 0.3),
 }
+
+FAMILIES = ('opus', 'sonnet', 'haiku', 'fable')
+
+
+def _parse_model(name):
+    """从型号名里取出 (家族, 主版本, 次版本)；认不出返回 None。
+
+    真实日志至少有两种写法，都要认：
+        claude-sonnet-4-5-20250929
+        claude-3-5-sonnet-20241022
+    前面还可能带供应商前缀（openrouter/anthropic/claude-…）。
+    """
+    low = str(name or '').strip().lower()
+    m = re.search(r'claude-(%s)-(\d+)(?:[-.](\d+))?' % '|'.join(FAMILIES), low)
+    if m:
+        return m.group(1), int(m.group(2)), int(m.group(3) or 0)
+    m = re.search(r'claude-(\d+)(?:[-.](\d+))?-(%s)' % '|'.join(FAMILIES), low)
+    if m:
+        return m.group(3), int(m.group(1)), int(m.group(2) or 0)
+    return None
+
+
+def _pricing_path():
+    override = os.environ.get(PRICING_ENV)
+    if override:
+        return os.path.expanduser(override)
+    return CC_PRICING
 
 
 def price_table():
     table = {}
     try:
-        with open(CC_PRICING, encoding='utf-8') as fh:
+        with open(_pricing_path(), encoding='utf-8') as fh:
             raw = json.load(fh)
         for row in raw.get('models') or []:
-            mid = str(row.get('modelId') or '').strip()
+            mid = str(row.get('modelId') or '').strip().lower()
             if not mid.startswith('claude-'):
                 continue
             try:
@@ -53,23 +102,40 @@ def price_table():
                 continue
     except (OSError, ValueError, TypeError):
         pass
+    # 外部表优先：它代表用户实际在用的价格口径，内置表只补缺口。
     for mid, price in FALLBACK_PRICES.items():
         table.setdefault(mid, price)
     return table
 
 
 def price_of(model, table):
-    key = str(model or '').strip()
+    key = str(model or '').strip().lower()
+    if not key:
+        return None
     if key in table:
         return table[key]
-    # 日志换了小版本号时（claude-opus-5-7），按家族退回最近的已知价目，
-    # 比直接不给金额更有用；tooltip 会写明是折算。
-    low = key.lower()
-    for family in ('opus', 'sonnet', 'haiku'):
-        if family in low:
-            for mid in ('claude-%s-5-5' % family, 'claude-%s-5' % family):
-                if mid in table:
-                    return table[mid]
+    # 带日期后缀的完整名：表里可能存的是同一个键，只比前缀
+    for mid, price in table.items():
+        if key.startswith(mid):
+            return price
+    parsed = _parse_model(key)
+    if not parsed:
+        return None
+    family, major, minor = parsed
+    for candidate in ('claude-%s-%d-%d' % (family, major, minor),
+                      'claude-%s-%d' % (family, major)):
+        if candidate in table:
+            return table[candidate]
+    # 同家族同主版本的任意型号 —— 同代价格通常一致
+    same_major = [(mid, price) for mid, price in table.items()
+                  if (lambda p: p and p[0] == family and p[1] == major)(_parse_model(mid))]
+    if same_major:
+        return sorted(same_major)[0][1]
+    # 同家族最接近的主版本：小版本号对不上时，比直接不给金额更有用
+    family_rows = [(p[1], mid, price) for mid, price in table.items()
+                   for p in [_parse_model(mid)] if p and p[0] == family]
+    if family_rows:
+        return min(family_rows, key=lambda row: (abs(row[0] - major), -row[0]))[2]
     return None
 
 
@@ -236,13 +302,19 @@ def spend_snapshot(path=None, now=None):
             last = when
 
     amount = round(total, 4)
+    # 价目来源要写清楚：别人机器上通常没有 CC Switch，
+    # 用的是内置公开价，数字会和他自己的面板对不上 —— 先说清楚，别让人怀疑算错。
+    if os.path.exists(_pricing_path()):
+        note = '按模型单价折算（与 CC Switch 用量面板同口径），不是中转站账单'
+    else:
+        note = '按模型单价折算（价目来源：内置公开价目，可设 %s 指定自己的表），不是中转站账单' % PRICING_ENV
     return {
         'amount': amount, 'currency': 'USD', 'verified': True, 'estimated': True,
         'source': 'Claude Code 本地日志 × 模型单价',
         'updatedAt': now.isoformat(),
         'coverageStart': first.isoformat() if first else None,
         'coverageEnd': last.isoformat() if last else None,
-        'note': '按模型单价折算（与 CC Switch 用量面板同口径），不是中转站账单',
+        'note': note,
         'byCurrency': {'USD': str(amount)},
         'today': {'USD': str(round(today, 4))},
         'month': {'USD': str(round(month, 4))},
@@ -285,7 +357,10 @@ def main():
             import_ledger(LEDGER_PATH, args.file)
             print('已导出标准化账单，请勿提交到公共仓库。')
         else:
-            print(json.dumps(snapshot(), ensure_ascii=False, indent=2))
+            # status 给"实际会显示的那个数"：有核对过的账单就是账单，
+            # 没有就按本机日志 × 单价折算。只打 snapshot() 的话，
+            # 没导入账单的人会看到一片 null，以为查不到花费。
+            print(json.dumps(spend_snapshot(), ensure_ascii=False, indent=2))
     except (OSError, ValueError, TypeError) as exc:
         parser.exit(1, '账单操作失败：' + (str(exc) if isinstance(exc, ValueError) else '文件不可读或格式无效') + '\n')
 
