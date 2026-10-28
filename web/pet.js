@@ -116,8 +116,11 @@
       ? sourceNames[key] + ' ' + shortNumber((today.bySource[key] || {}).totalTokens)
       : '今日 ' + shortNumber(today.totalTokens) + ' Token' + (today.complete ? '' : '*');
     tokenButton.title = today.dayLocal + ' · ' + today.note + '\n' + names.map(function (name) {
-      var n = (today.bySource[name] || {}).totalTokens;
-      return sourceNames[name] + ': ' + (n == null ? '未统计' : n.toLocaleString() + ' Token');
+      var src = today.bySource[name] || {};
+      var n = src.totalTokens;
+      // 中转站口径的那一栏标出来：它的数字比本机日志大，不标会像"统计飘了"
+      return sourceNames[name] + ': ' + (n == null ? '未统计' : n.toLocaleString() + ' Token')
+        + (src.basis === 'provider' ? '（中转站口径）' : '');
     }).join('\n') + '\n点击轮换来源（当前：' + (tokenView ? sourceNames[key] : '全部') + '）';
   }
   if (tokenButton) tokenButton.addEventListener('click', function () { tokenView = (tokenView + 1) % 4; showTokens(); });
@@ -149,13 +152,18 @@
         var amount = valid ? (d.currency === 'USD' ? '$' : d.currency + ' ') + d.amount.toFixed(2) : '—';
         costLabel.textContent = '已花费 ' + amount;
         var dayAmount = (d.today && d.currency) ? Number(d.today[d.currency]) : null;
+        var listToday = d.listCost ? d.listCost.today : null;
+        var remaining = typeof d.remaining === 'number' ? d.remaining : null;
         costLabel.title = [
           d.note,
+          // 今日实扣：和站内账单同一个数（不用再乘倍率）
           dayAmount != null && isFinite(dayAmount)
             ? '今日 $' + dayAmount.toFixed(2) + ' · ' + (d.todayRequests || 0) + ' 次调用' : null,
+          remaining != null ? '钱包余额 $' + remaining.toFixed(2) : null,
+          // 挂牌价是 CC Switch 用量面板算的那个数，两者不一样是正常的，写清楚免得被当成算错
+          listToday ? '今日挂牌价 $' + Number(listToday).toFixed(2) + '（CC Switch 面板口径，非实扣）' : null,
           d.requests != null ? '累计 ' + d.requests + ' 次调用' : null,
-          '来源：' + (d.source || '—'),
-          '更新：' + (d.updatedAt || '—')
+          '来源：' + (d.source || '—') + (d.stale ? '（离线，显示最后一次取到的值）' : '')
         ].filter(Boolean).join('\n');
       }).catch(function () { if (costLabel) { costLabel.textContent = '已花费 —'; costLabel.title = '费用暂不可读'; } })
     ]).then(function () { metricsBusy = false; });

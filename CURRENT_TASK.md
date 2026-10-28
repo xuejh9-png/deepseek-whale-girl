@@ -101,3 +101,24 @@ WKWebView 的安全上下文停在 file 那次，之后页面里所有 fetch 都
 位置记忆与拖动夹边界未改动。
 
 改动文件：desktop/main.swift、pet_daemon.py、web/pet.js、README.md、本文件、验证记录。
+
+## 2026-10-28 18:00 接续（中转站真实用量，已完成）
+
+用户转达中转站客服：桌宠不要再用 CC Switch 的配置取数，直接调
+`GET https://api.aishop520.com/v1/usage`（`remaining`、`usage.today.actual_cost`、
+`usage.total.actual_cost`、`daily_usage`、`model_stats`），并解释为什么费用和后台不一致。
+
+1. 新增 `provider_usage.py`：Key 取自 `~/.claude/settings.json` / CC Switch 库；
+   带固定 UA（默认 `Python-urllib` 会被 Cloudflare 以 Error 1010 拒绝，实测）；
+   地址顺序「上次成功 → base（本地转发层 127.0.0.1:8765）→ 直连」（直连在国内被
+   `unsupported_region` 拦，实测）；60 秒缓存 + 磁盘兜底 + 后台线程，调用方永不阻塞。
+2. `claude_cost.spend_snapshot()` 顺序改为 **中转站实扣 → 导入账单 → 本机折算**；
+   `/claude-cost` 增加余额、挂牌价、请求数；`/usage` 的 Claude 一栏换成中转站口径
+   （替换不累加），新增 `/provider-usage` 排障口。
+3. 对账（2026-10-28）：本机 76 次 / 18.83M token / 折算 $11.97；
+   中转站 129 次 / 23.38M token / 挂牌 $25.39 / 实扣 $19.48。
+   差额来自覆盖（本机只有 13 个 jsonl、累计 81 次 vs 197 次）、分量计数、以及
+   "挂牌价≠实扣且不是固定倍率"。详见 docs/20261028_中转站真实用量接入.md。
+4. 测试：provider_usage.test.py 19 项、test_usage.py 23 项、pet_sources.test.py 34 项全过。
+
+注意：本次只改数据源与展示，未改窗口/手势/素材；`pet_daemon` 需重启才生效。

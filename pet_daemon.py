@@ -9,7 +9,8 @@ WorkBuddy Pet —— 本地状态服务（纯 Python 标准库）
 
     GET /state     → {"agent": {state, label, task, cwd, ...}, "source": ...}
     GET /usage     → 兼容旧月度字段 + 三种工具今日 Token
-    GET /claude-cost → 已核对的本地中转站账单（缺失为 null）
+    GET /claude-cost → 已花费：中转站实际扣费（接口不可达时退到本机折算）
+    GET /provider-usage → 中转站原始用量（余额/按天/按模型），排障用
     GET /health    → {"ok": true}
     GET /          → 用量报告.html
     GET /pet.html  → 桌面宠物页面
@@ -41,6 +42,7 @@ if HERE not in sys.path:
 
 import pet_sources as SRC          # noqa: E402
 import claude_cost as COST
+import provider_usage as PROVIDER  # noqa: E402
 import usage_stats as US           # noqa: E402
 
 PORT_FILE = os.path.join(HERE, "pet.port")
@@ -87,6 +89,45 @@ def usage_snapshot():
         _usage_cache["ts"] = time.monotonic()
         _usage_cache["day"] = day
         return data
+
+
+def apply_provider_today(today):
+    """把「今日 Token」里 Claude 那一栏换成中转站口径。
+
+    入参就是 `usage_stats.today_usage()` 的那个结构（bySource / coverage / totalTokens），
+    不是外层 usage 快照 —— 两者差一层，接错了会静默无效（本轮就踩过）。
+
+    为什么只换 Claude：WorkBuddy / Codex 只有本地日志可信，没别的来源。
+    Claude 不一样 —— 中转站知道这个 Key 今天到底被调了多少次、多少 token，
+    而本机日志只覆盖一部分请求（实测今日 76 次 vs 中转站 129 次，
+    见 docs/20261028_中转站真实用量接入.md 的对账表）。
+
+    只**替换**不累加：两边算的是同一批请求，加起来就是重复计数。
+    """
+    prov = PROVIDER.snapshot()
+    if not prov or not prov.get("ok") or not isinstance(today, dict):
+        return today
+    day = prov.get("today") or {}
+    if not day.get("tokens"):
+        return today
+    if not isinstance((today.get("bySource") or {}).get("claude"), dict):
+        return today
+
+    out = json.loads(json.dumps(today))         # 深拷贝：缓存对象不许就地改
+    local = (out["bySource"]["claude"].get("totalTokens") or 0)
+    out["bySource"]["claude"] = {
+        "totalTokens": day["tokens"],
+        "calls": day["requests"],
+        "basis": "provider",                    # 前端/排障用：这一栏不是本地日志
+        "localTokens": local,                   # 本地只看到多少，留证据
+    }
+    out["coverage"]["claude"] = "provider"
+    out["totalTokens"] = sum((v or {}).get("totalTokens") or 0
+                             for v in out["bySource"].values())
+    out["complete"] = all(s in ("connected", "provider") for s in out["coverage"].values())
+    out["note"] = "Claude 来自中转站接口（与实际扣费同源），其余为本机日志"
+    out["providerAge"] = prov.get("ageSeconds")
+    return out
 
 
 # ---------------------------------------------------------------- 重新统计
@@ -160,7 +201,10 @@ def build_usage():
     if snap is None:
         return {"ok": True, "ts": now, "apiVersion": 1, "usage": None,
                 "note": "当前环境没有用量数据（只有 WorkBuddy 源有）"}
-    return {"ok": True, "ts": now, "apiVersion": 2, "usage": snap, "today": snap.get("today")}
+    # 缓存里的对象不动：换掉引用而不是就地改，否则下一次（未到 TTL）会把旧值当新值发出去
+    out = dict(snap)
+    out["today"] = apply_provider_today(snap.get("today") or {})
+    return {"ok": True, "ts": now, "apiVersion": 3, "usage": out, "today": out["today"]}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -238,6 +282,8 @@ class PetHandler(SimpleHTTPRequestHandler):
             return self._json(build_usage())
         if path in ("/claude-cost", "/api/claude-cost"):
             return self._json(COST.spend_snapshot())
+        if path in ("/provider-usage", "/api/provider-usage"):
+            return self._json(PROVIDER.snapshot() or {"ok": False, "note": "中转站接口暂不可达"})
         if path in ("/regenerate", "/api/regenerate"):
             return self._json(regenerate_report())
         if path in ("/health", "/version"):
@@ -288,6 +334,8 @@ def serve(port, open_browser):
     # 先把用量解析缓存焐热：冷启动要扫一遍全部日志（本机约 5 秒），
     # 不预热的话宠物打开后的第一屏会长时间停在「—」。
     threading.Thread(target=usage_snapshot, daemon=True).start()
+    # 中转站用量单独一个后台线程：它要走网络（可能几秒），绝不能卡在 /state 上。
+    PROVIDER.start()
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

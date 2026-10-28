@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Claude 费用：两种口径，分开算，绝不混在一起。
+"""Claude 费用：三种口径，分开算，绝不混在一起。
 
-1. `snapshot()` —— 中转站导出账单（真金白银）。需要用户导入并核对总额；
+1. `provider_snapshot()` —— 中转站 `/v1/usage` 的**真实扣费**（钱包账）。
+   这是唯一和账单对得上的数；拿不到才往下走。
+2. `snapshot()` —— 本机导入的中转站导出账单（历史/离线场景）。需要用户导入并核对总额；
    没导入就如实返回 amount=None。
-2. `spend_snapshot()` —— Claude Code 本机日志按模型单价折算（本机日志里没有
+3. `spend_snapshot()` —— Claude Code 本机日志按模型单价折算（本机日志里没有
    cost 字段）。单价表优先读 CC Switch 的 `model-pricing.json`，与它「用量统计」
-   面板同口径，可以互相对账；读不到时用内置的 Claude 价目兜底。
+   面板同口径 —— 但那是**挂牌价**，不等于钱包扣款。
 
-账单存在时以账单为准；否则用折算值，并在 note 里写明这是折算、不是账单。
+严格说这三者不是同一个数：挂牌价 × 本机日志 ≠ 钱包实扣。
+优先级 provider → 导入账单 → 本机折算，并在 note 里写清楚当前是哪一种。
 """
 import argparse
 import datetime as dt
@@ -18,6 +21,7 @@ import os
 import re
 import tempfile
 
+import provider_usage as PU
 from usage_stats import is_claude, iter_claude_calls
 
 LEDGER_PATH = os.path.expanduser('~/.local/share/workbuddy-pet/claude-ledger.json')
@@ -259,15 +263,64 @@ def snapshot(path=None, now=None):
     return result
 
 
+def provider_snapshot(now=None):
+    """中转站 `/v1/usage` 的真实扣费，转成和 snapshot() 一样的结构。
+
+    返回 None = 这次拿不到（没 Key / 网络不通 / 接口改版），调用方自己决定退到哪一层。
+    **不做任何猜测**：拿不到就不给数，比给一个看起来像真的数更安全。
+    """
+    data = PU.snapshot()
+    if not data or not data.get("ok"):
+        return None
+    now = now or dt.datetime.now().astimezone()
+    today, total, month = data["today"], data["total"], data["month"]
+    currency = data.get("currency") or "USD"
+    stale = bool(data.get("stale"))
+    note = ("中转站 /v1/usage 的实际扣费（与站内账单同口径）"
+            + ("；当前显示的是最后一次成功拉取的值" if stale else ""))
+    return {
+        "amount": round(total["actualCost"], 4),
+        "currency": currency,
+        "verified": True,
+        "estimated": False,
+        "source": "中转站 /v1/usage（实际扣费）",
+        "updatedAt": data.get("fetchedAt") or now.isoformat(),
+        "coverageStart": (data["daily"][0]["date"] if data.get("daily") else None),
+        "coverageEnd": today.get("date") or now.date().isoformat(),
+        "note": note,
+        "byCurrency": {currency: str(round(total["actualCost"], 4))},
+        "today": {currency: str(round(today["actualCost"], 4))},
+        "month": {currency: str(round(month["actualCost"], 4))},
+        "requests": total["requests"],
+        "todayRequests": today["requests"],
+        "tokens": {"total": total["tokens"], "today": today["tokens"]},
+        # 钱包与挂牌价：用来解释「为什么和 CC Switch 面板不一样」
+        "remaining": round(data["remaining"], 4),
+        "listCost": {"total": round(total["listCost"], 4),
+                     "today": round(today["listCost"], 4)},
+        "planName": data.get("planName") or "",
+        "accountValid": data.get("valid", True),
+        "stale": stale,
+        "ageSeconds": data.get("ageSeconds"),
+        "endpoint": data.get("endpoint"),
+        "lastError": data.get("lastError"),
+    }
+
+
 def spend_snapshot(path=None, now=None):
-    """Claude Code 的消费：有核对过的账单就用账单，否则按单价折算。
+    """Claude Code 的消费：真实扣费优先，其次是导入账单，最后才是单价折算。
 
     返回结构与 snapshot() 兼容（amount / currency / verified / today / month），
-    前端不用为两种口径写两套渲染。
+    前端不用为三种口径写两套渲染。
     """
+    by_provider = provider_snapshot(now)
+    if by_provider:
+        return by_provider
+
     bill = snapshot(path, now)
     if bill.get('verified'):
         bill['estimated'] = False
+        bill['note'] = (bill.get('note') or '') + '；接口不可达，暂用导入账单'
         return bill
 
     now = now or dt.datetime.now().astimezone()
@@ -314,9 +367,10 @@ def spend_snapshot(path=None, now=None):
     # 价目来源要写清楚：别人机器上通常没有 CC Switch，
     # 用的是内置公开价，数字会和他自己的面板对不上 —— 先说清楚，别让人怀疑算错。
     if os.path.exists(_pricing_path()):
-        note = '按模型单价折算（与 CC Switch 用量面板同口径），不是中转站账单'
+        note = '按模型单价折算（与 CC Switch 用量面板同口径），不是中转站账单；接口不可达，暂用本机折算'
     else:
-        note = '按模型单价折算（价目来源：内置公开价目，可设 %s 指定自己的表），不是中转站账单' % PRICING_ENV
+        note = ('按模型单价折算（价目来源：内置公开价目，可设 %s 指定自己的表），'
+                '不是中转站账单；接口不可达，暂用本机折算' % PRICING_ENV)
     return {
         'amount': amount, 'currency': 'USD', 'verified': True, 'estimated': True,
         'source': 'Claude Code 本地日志 × 模型单价',

@@ -1,11 +1,12 @@
 # Token 面板 + 花费 + 桌面宠物
 
-一套本地小工具，只读磁盘上的日志，不联网、不改任何客户端。三件事：
+一套本地小工具，只读磁盘上的日志，不改任何客户端。三件事：
 
 1. **用量面板** —— 把 **DeepSeek（WorkBuddy）+ ChatGPT（桌面版）+ Claude Code**
    消耗的 token 按天统计成网页报告，柱状图按来源分色
-2. **花费** —— Claude Code 在本机一共花了多少钱（读 `~/.claude/projects` 的日志、
-   按模型单价折算，覆盖本机能读到的全部历史），命令行和桌宠卡片共用同一个口径
+2. **花费** —— Claude Code 一共花了多少钱。**优先问中转站的 `/v1/usage` 拿钱包实扣**
+   （和站内账单同一个数）；接口不可达时退到「本机日志 × 模型单价」折算，
+   并在说明里标明这是折算值。命令行和桌宠卡片共用同一个口径
 3. **桌面宠物** —— 一只用透明窗口浮在桌面上的小鲸鱼娘，会**看着你干活**：
    你让她工作时她坐着敲电脑、思考时歪头、任务完成时跳起来、没动静了会睡着
 
@@ -16,7 +17,9 @@
 ![deepseek 鲸鱼娘](docs/pet-screenshot.png)
 
 > 顺带说明：**这不是 WorkBuddy 官方功能**，是一个独立的本地小工具，
-> 只读 WorkBuddy 写在磁盘上的记录文件，不改它、也不联网。
+> 只读 WorkBuddy 写在磁盘上的记录文件，不改它。
+> **唯一的对外请求**是查中转站余额/实扣（`GET /v1/usage`，只发 Key 和 UA，不发任何日志内容）；
+> 不用这个功能（或没有 Key）时会自动退回纯本机计算。
 >
 > 命名说明：ChatGPT 桌面版的数据目录是 `~/.codex`，所以代码里沿用了 `codex`
 > 这个名字（`CodexSource`、`--source codex`、`SRC_CODEX`）；
@@ -174,9 +177,9 @@ macOS 上也可以**双击 `查看用量.command`**。
 
 | | 已花费（顶部） | 今日 Token（底部） |
 |---|---|---|
-| 算谁 | 只有 Claude Code | WorkBuddy + ChatGPT + Claude Code |
-| 时间 | 本机能读到的**全部历史** | **今天**一天 |
-| 单位 | 美元（按模型单价折算） | token 数 |
+| 算谁 | 只有 Claude（中转站那把 Key） | WorkBuddy + ChatGPT + Claude |
+| 时间 | 中转站记账以来的**累计实扣** | **今天**一天 |
+| 单位 | 美元（钱包真扣的钱） | token 数 |
 
 再加两点容易误会的：
 
@@ -187,22 +190,26 @@ macOS 上也可以**双击 `查看用量.command`**。
 
 ### 两个数字各自怎么算
 
-- **今日 Token**：WorkBuddy / ChatGPT / Claude Code 三来源合计；点一下轮换单来源，
+- **今日 Token**：WorkBuddy / ChatGPT / Claude 三来源合计；点一下轮换单来源，
   悬停显示精确数字。`*` 表示"仅统计已接入来源"。多任务仍然参与动画状态选择，
   优先观察正在干活的那个，所以宠物会跟着当前任务动。
-- **已花费**：直接读 `~/.claude/projects/**/*.jsonl`，按模型单价折算输入、输出、缓存读、
-  缓存写四条分量；覆盖本机能读到的全部历史，不只是今天。悬停能看到今日金额、
-  调用次数和覆盖起止时间。
+  - 其中 **Claude 那一栏优先用中转站接口**的数（它知道这个 Key 今天被调了多少次），
+    本机日志只覆盖一部分请求；tooltip 会标「中转站口径」。
+- **已花费**：**先问中转站 `GET /v1/usage`**，取 `usage.total.actual_cost`（累计实扣）
+  和 `usage.today.actual_cost`（今日实扣）—— 和站内账单完全一致，不用再乘倍率。
+  悬停还能看到钱包余额、今日挂牌价、调用次数。
+  - **接口拿不到时**（没 Key / 网络不通 / 中转站改版）退回本机折算：读
+    `~/.claude/projects/**/*.jsonl`，按模型单价算输入、输出、缓存读、缓存写四条分量，
+    并在说明里写明"暂用本机折算"。
   - **价目优先用 CC Switch**（`~/.cc-switch/model-pricing.json`）—— 它和 CC Switch
-    「用量统计」面板是同一批日志、同一张表，两边可以逐项对账
-    （本机实测请求数、token 总数一致，金额差小于 1 美分，来自四舍五入）。
+    「用量统计」面板是同一批日志、同一张表，两边可以逐项对账。
   - **没装 CC Switch 也能算**：内置一份 Claude 公开价目（Fable / Opus / Sonnet / Haiku，
     4.x 到 5.x 二十多个型号），按「家族 + 版本」自动匹配；带日期后缀的
     `claude-sonnet-4-5-20250929` 和旧写法 `claude-3-5-sonnet-20241022` 都能认，
     认不出的家族会退到最接近的一代，并在 tooltip 里注明是折算。
-  - 想换成自己的价目表：`PET_CLAUDE_PRICING=/path/to/pricing.json`（格式同 CC Switch）。
+  - 想换成自己的接口：`PET_USAGE_URL=https://... PET_USAGE_KEY=sk-...`。
   - Claude 日志不在默认位置：`PET_CLAUDE_DIR=/path/to/projects`。
-  - 导入过核对过的中转站账单时，以账单为准。
+  - 导入过核对过的中转站账单时，接口不可达则用账单。
 - **自带刷新，不显示时间戳**：状态每 2 秒、用量每 3 秒重算一次。用量侧按文件
   `mtime + size` 增量解析（全量扫描 3.5 秒 → 命中缓存约 20 毫秒），所以高频刷新不会烧 CPU。
   页面隐藏时暂停轮询，回到前台立即续上。
@@ -210,7 +217,8 @@ macOS 上也可以**双击 `查看用量.command`**。
 
 数据接口：`/state` 保留 `agent`，增加 `tasks` 与 `activeSessions`；`/usage` 保留原月度
 DeepSeek 字段，在顶层及 `usage.today` 返回三来源今日统计；`/claude-cost` 返回金额、币种、
-验证状态、覆盖起止和更新时间。账单/任务接口只允许同源本机读取，拒绝外站和不透明 Origin。
+验证状态、钱包余额、挂牌价与覆盖起止；`/provider-usage` 直接返回中转站原始用量（排障用）。
+账单/任务接口只允许同源本机读取，拒绝外站和不透明 Origin。
 双击本地 HTML 的报告“重新统计”仍兼容；桌宠使用本地服务页面时才能读取私有数据。
 
 **Codex 的两套累计账本不能混算**：优先按 `response_id` 统计单次用量；只在该轮没有单次记录时，
@@ -218,7 +226,28 @@ DeepSeek 字段，在顶层及 `usage.today` 返回三来源今日统计；`/cla
 Claude Code 按 message/request ID 去重，同一流式消息取各用量字段的最大值，缓存创建、读取各计一次；
 `<synthetic>` 等非 Claude 模型不计入。今日统计受本机可读日志的覆盖范围限制。
 
-### 中转站账单导入（离线）
+### 中转站用量接口（在线，默认路径）
+
+`GET https://api.aishop520.com/v1/usage`，`Authorization: Bearer <Key>`，返回
+`remaining`（钱包余额）、`usage.today.actual_cost`（今日实扣）、`usage.total.actual_cost`
+（累计实扣）、`daily_usage`、`model_stats`。
+
+两个坑（都实测过，见 `docs/20261028_中转站真实用量接入.md`）：
+
+1. **必须自带 User-Agent。** Python 默认的 `Python-urllib/3.x` 会被 Cloudflare
+   以 `Error 1010: Access denied` 拒绝，请求连鉴权都到不了。
+2. **直连在国内网络会被地区拦截**（`unsupported_region`）。本机用一层本地转发
+   （`127.0.0.1:8765`，Safari TLS 指纹 + 系统代理）出站，`ANTHROPIC_BASE_URL` 就指向它；
+   同一个接口，走它才通。程序按「上次成功的地址 → 配置里的 base → 直连」依次尝试。
+
+自查一行：
+
+```bash
+python3 provider_usage.py          # 余额 / 今日实扣 / 累计实扣 / 用的哪个地址
+python3 provider_usage.py --json   # 完整结构（含按天、按模型）
+```
+
+### 中转站账单导入（离线兜底）
 
 尚未接入已核实的在线账单 API。提供一个标准化 JSON 导入层，由中转站的真实导出映射得到，
 **不能手填估算值**。原始账单及标准化账单都放在仓库之外；默认私有存储为

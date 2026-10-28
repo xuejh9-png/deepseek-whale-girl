@@ -167,6 +167,7 @@ class BillingTests(unittest.TestCase):
                'cacheCreation':1000000,'total':1000000,'when':dt.datetime(2026,10,22,9,0)}]
         with patch.object(C,'iter_claude_calls',return_value=iter(rows)), \
              patch.object(C,'price_table',return_value=C.FALLBACK_PRICES), \
+             patch.object(C,'provider_snapshot',return_value=None), \
              patch.object(C,'snapshot',return_value={'amount':None,'verified':False}):
             got=C.spend_snapshot(now=dt.datetime(2026,10,26,12,0))
         # 4 + 20 + 0.2 + 5（四条分量各 1M），外加未知小版本按 opus 家族兜底 5。
