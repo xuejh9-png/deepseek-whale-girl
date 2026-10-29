@@ -211,6 +211,61 @@ def sleep_rule_tests():
     return ok, len(SLEEP_CASES)
 
 
+def claude_tests():
+    from unittest.mock import patch
+    from pathlib import Path
+    cases = json.loads((Path(__file__).parent / "tests/claude-state-cases.json").read_text(encoding="utf-8"))
+    passed = 0
+    now = int(time.time() * 1000)
+    print("\nClaude 跨平台共用场景：")
+    for case in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            project.mkdir()
+            events = []
+            for event in case["events"]:
+                row = dict(event)
+                ago = row.pop("ago")
+                row.update(timestamp=dt.datetime.fromtimestamp((now - ago * 1000) / 1000, dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                           cwd="/demo", sessionId="claude-demo")
+                events.append(row)
+            log = project / "session.jsonl"
+            log.write_text("\n".join(json.dumps(r) for r in events) + "\n", encoding="utf-8")
+            source = SRC.ClaudeSource(root=tmp)
+            with patch.object(SRC, "now_ms", return_value=now):
+                got = source.snapshot()
+                good = got["state"] == case["state"]
+                passed += good
+                print(f"  {'✓' if good else '✗'} {case['name']}: {got['state']} (期望 {case['state']})")
+                assert source.snapshot() == got, "缓存不能改变结果"
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "project"
+        p.mkdir()
+        row = {"timestamp": iso(1), "type": "assistant", "sessionId": "claude-live",
+               "message": {"content": [{"type": "tool_use"}]}}
+        log = p / "real.jsonl"
+        log.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        for i in range(5):
+            (p / f"meta{i}.jsonl").write_text(json.dumps({"type": "attachment", "timestamp": iso(0)}) + "\n", encoding="utf-8")
+        sub = p / "subagents"
+        sub.mkdir()
+        (sub / "agent.jsonl").write_text(json.dumps({"type": "assistant", "timestamp": iso(0), "message": {"content": [{"type": "text"}]}}) + "\n", encoding="utf-8")
+        source = SRC.ClaudeSource(root=tmp)
+        assert source.snapshot()["state"] == "working", "元数据/子代理不能遮住主会话"
+        log.write_text(json.dumps(dict(row, type="user", message={"content": "[Request interrupted by user]"})) + "\n", encoding="utf-8")
+        assert source.snapshot()["state"] == "error", "日志变更后缓存必须失效"
+        log.unlink()
+        assert source.snapshot()["state"] == "offline", "删掉会话不能残留工作状态"
+        with patch.dict(os.environ, {"PET_CLAUDE_DIR": tmp}):
+            assert SRC.pick("claude").root == tmp
+        auto = SRC.AutoSource()
+        auto._sources = [source]
+        assert auto.snapshot()["source"] == "claude"
+        assert "claude" in SRC.REGISTRY
+        passed += 6
+    return passed, len(cases) + 6
+
+
 def main():
     ok = 0
     print("Codex 状态推断：")
@@ -246,7 +301,9 @@ def main():
     wok, wtotal = workbuddy_tests()
     ok += wok
 
-    total = len(CASES) + 2 + stotal + wtotal
+    cok, ctotal = claude_tests()
+    ok += cok
+    total = len(CASES) + 2 + stotal + wtotal + ctotal
     print(f"\n  {ok}/{total} 通过")
     return 0 if ok == total else 1
 

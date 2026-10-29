@@ -1,4 +1,4 @@
-# 桌面宠物 · Windows 11 版
+# 桌面宠物 · Windows 11 版（1.0.1）
 
 同一只鲸鱼娘，外壳从 macOS 的 Swift + WKWebView 换成 Electron。
 动画、素材、交互逻辑与 macOS 版**共用同一份前端代码**（`../pet.html`、`../web/`、`../assets/pet/`），
@@ -6,19 +6,38 @@
 
 ---
 
-## 先说清楚：什么验证过、什么没验证
+## 1.0.1 修复与验证
 
-这一版是在 **macOS 上写完并跑通的**，没有 Windows 11 真机可用。所以：
+- `/state` 现在按网页约定返回 `{agent, tasks, ...}`，状态能真正驱动动画。
+- 补齐 Claude 业务事件：工具长任务、工具结果、进度、请求开始、流式思考、完成及错误。
+  元数据和子代理日志不覆盖主会话；超过 30 分钟无业务事件的未完成记录视为陈旧。
+- 卡片与角色共用固定画布；窗口尺寸改变时点击区域也跟随同一画布。
+- 费用优先读取中转站 `/v1/usage` 的实际扣费；余额只在费用悬停说明显示，外观不变。
+- 使用个人电脑上的 Key，不内置开发者 Key；换 Key 清缓存；断网旧值标明离线。
 
-| 项目 | 状态 | 说明 |
-|---|---|---|
-| 数据层（状态 / 今日 token / 花费） | ✅ 已验证 | `node test-claude-code.js` **31 项**断言；与 macOS 版逐项对账，金额 0.224 / 5 次调用 / 82641 token 完全一致 |
-| 前端复用（动画、双击反应、卡片） | ✅ 已验证 | 同一份 `web/` 代码，在 Electron 里实际跑过 |
-| 窗口创建 / 位置记忆 / 菜单 / 快捷键 | ✅ 已验证（macOS 上跑 Electron） | 实际启动后窗口正常渲染、数据加载成功，见下方「本机实跑记录」 |
-| **Windows 11 真机表现** | ⚠️ **未验证** | 透明窗口、鼠标穿透、任务栏隐藏、多屏缩放都只在 macOS 上跑过 |
-| 打包成 .exe 安装包 | ⚠️ 未验证 | 需要在 Windows 上执行 `npm run dist`，脚本已配好 |
+本机 macOS 已执行 Node 数据回归、Electron 四组网页回归、真实 HTTP→动画和四组窗口尺寸检查。
+Windows 云端流程会执行相同回归并构建 NSIS 安装包。
+**Windows 11 人工拖动、显卡透明效果、不同缩放显示器间切换仍未验证。**
 
-**别把"没报错"当成"Windows 上一定正常"**。下面「已知风险」列了大概率要调的地方。
+## 配置个人中转站 Key
+
+接口地址相同，数据由各自 Key 决定。自动读取进程环境或
+`%USERPROFILE%\.claude\settings.json` 的 `env.ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY`，
+及 `ANTHROPIC_BASE_URL`（本中转站或本机转发）。支持 `CLAUDE_CONFIG_DIR`。
+不依赖 CC Switch 的余额、倍率或统计功能。
+
+也可在启动宠物的终端中显式配置：
+
+```bat
+set PET_USAGE_KEY=你自己的Key
+set PET_USAGE_URL=https://api.aishop520.com/v1/usage
+npm start
+```
+
+已安装 exe 不需要 Node；已有 Claude 配置的用户直接启动即可。
+Key 由各人在中转站账户创建，不需要另行索取接口，不要共用开发者 Key。
+实扣按这把 Key 汇总；余额可能是钱包余额，也可能是该 Key 的剩余额度。
+未配置或接口不可达时退回本机日志估算，并在悬停说明标注估算。
 
 ---
 
@@ -43,7 +62,7 @@ LC_ALL=C PYTHONUTF8=0 python3 pet_sources.test.py
 
 ---
 
-## 本机实跑记录（macOS 上验证 Electron 版）
+## 1.0.0 历史实跑记录（macOS 上验证 Electron 版）
 
 ```
 [pet] 本地服务 http://127.0.0.1:57252
@@ -78,7 +97,7 @@ LC_ALL=C PYTHONUTF8=0 python3 pet_sources.test.py
 对应三种显示：
 
 - **今日 token（底部）**：三个来源分别统计再相加；点一下轮换单来源，悬停看精确数字
-- **已花费（顶部）**：只有 Claude Code —— 另外两家的日志里没有价格信息，算不出钱
+- **已花费（顶部）**：本中转站 Key 实扣优先，拿不到时退回 Claude Code 本机估算
 - **动画状态**：WorkBuddy 和 Claude Code 各取一份，选「最活跃 + 最后动过」的那个
 
 **目录不存在就跳过**，不报错也不编数字，缺失的来源显示成 `—`。
@@ -206,7 +225,8 @@ windows/
 
 ```bat
 cd windows
-node test-claude-code.js
+npm test
+npm run test:ui
 ```
 
 不依赖 Electron，也不依赖本机此刻是否在用 Claude Code（用合成日志 + 受控时间戳）。

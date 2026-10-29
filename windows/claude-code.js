@@ -7,8 +7,7 @@
  *   所以这里用 Node 重写「读日志 → 状态 / 今日 token / 花费」这一段，
  *   口径和 macOS 版逐项对齐（同样的去重规则、同样的价目表、同样的时间窗口）。
  *
- * 只接 Claude Code：WorkBuddy / ChatGPT 的解析逻辑重写成本高，
- * 而且它们都不是 Windows 上的主力工具。这一点在 README 里明确标注。
+ * WorkBuddy / ChatGPT 的汇总见 sources.js；中转站实扣见 provider-usage.js。
  */
 
 const fs = require('fs');
@@ -20,15 +19,12 @@ const { priceTable, priceOf, pricingPath, PRICING_ENV } = require('./pricing');
 
 const CLAUDE_PROJECTS = (process.env.PET_CLAUDE_DIR
   ? process.env.PET_CLAUDE_DIR.replace(/^~(?=$|[\\/])/, os.homedir())
-  : path.join(os.homedir(), '.claude', 'projects'));
+  : path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects'));
 
 // 判定窗口（毫秒）—— 与 usage_stats.py / pet_sources.py 保持一致
-const FRESH_MS = 4000;
-const WORK_WINDOW_MS = 25000;
 const SUCCESS_WINDOW_MS = 25000;
 const WAITING_MS = 45000;
 const SLEEP_MS = 60000;
-const SCAN_WINDOW_MS = 180000;
 
 const LABELS = {
   idle: '空闲', thinking: '思考中', working: '执行中',
@@ -250,38 +246,53 @@ async function readTail(file, maxLines = 200, maxBytes = 600000) {
   }
 }
 
-/** 从一段尾部行里取出「最后一条有时间的记录」—— 没有就返回 null */
-function scanTail(lines) {
-  let cwd = null;
-  let sessionId = null;
-  // 元信息先补：日志末尾常有 summary / cost-state 这类没有时间戳的记录
-  for (let i = lines.length - 1; i >= 0 && (!cwd || !sessionId); i -= 1) {
-    try {
-      const rec = JSON.parse(lines[i]);
-      if (!cwd && rec.cwd) cwd = String(rec.cwd);
-      if (!sessionId && rec.sessionId) sessionId = String(rec.sessionId);
-    } catch (err) { /* 首行可能被截断 */ }
+// 只认业务事件。带时间戳的 attachment / stop_hook_summary 也不能覆盖任务状态。
+function eventState(rec) {
+  if (rec.isSidechain) return null;
+  const msg = rec.message || {};
+  const parts = Array.isArray(msg.content) ? msg.content : [];
+  const has = (type) => parts.some((p) => p && p.type === type);
+  if (rec.type === 'assistant') {
+    if (has('tool_use') || msg.stop_reason === 'tool_use') return 'working';
+    if (msg.stop_reason === 'end_turn' || msg.stop_reason === 'stop_sequence') return 'success';
+    if (has('thinking') && !has('text')) return 'thinking';
+    // 旧版日志不写 stop_reason；显式 null 表示流式生成尚未结束。
+    if (has('text')) return msg.stop_reason === null ? 'thinking' : 'success';
   }
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    let rec;
-    try {
-      rec = JSON.parse(lines[i]);
-    } catch (err) {
-      continue;
-    }
+  if (rec.type === 'user') {
+    if (has('tool_result')) return 'thinking';
+    if (typeof msg.content === 'string' && msg.content.startsWith('[Request interrupted by user')) return 'error';
+    if (typeof msg.content === 'string' || has('text')) return 'thinking';
+  }
+  if (rec.type === 'api-request') return 'thinking';
+  if (rec.type === 'progress') return 'working';
+  if (rec.type === 'system' && rec.subtype === 'api_error') return 'error';
+  return null;
+}
+
+function scanTail(lines) {
+  const recs = [];
+  for (const line of lines) {
+    try { recs.push(JSON.parse(line)); } catch (err) { /* 正在追加的半行 */ }
+  }
+  let cwd = null, sessionId = null;
+  for (const rec of recs) {
+    if (rec.cwd) cwd = String(rec.cwd);
+    if (rec.sessionId) sessionId = String(rec.sessionId);
+  }
+  for (let i = recs.length - 1; i >= 0; i -= 1) {
+    const rec = recs[i];
     const ts = Date.parse(rec.timestamp || '');
     if (!Number.isFinite(ts)) continue;
-    let kind = rec.type;
-    if (rec.type === 'assistant') {
-      const content = (rec.message || {}).content;
-      const toolUse = Array.isArray(content)
-        && content.some((part) => part && part.type === 'tool_use');
-      kind = toolUse ? 'assistant-tool' : 'assistant-text';
-    }
-    return { ts, kind, cwd, sessionId };
+    const state = eventState(rec);
+    if (state) return { ts, state, cwd, sessionId };
   }
   return null;
 }
+
+// 日志没有可靠的进程心跳；半小时无业务事件视为陈旧，避免崩溃后永久工作。
+const ACTIVE_STALE_MS = 30 * 60 * 1000;
+const stateCache = new Map();
 
 /** 状态推断 —— 取最近真的写过业务记录的那个会话
  *
@@ -296,22 +307,33 @@ async function stateSnapshot(now = new Date()) {
     source: 'claude', ...extra,
   });
 
-  const files = await walk(CLAUDE_PROJECTS);
+  const files = (await walk(CLAUDE_PROJECTS)).filter((file) => {
+    // 子代理日志不代表主会话；否则主任务完成后子代理残留会把动画拉回工作。
+    return path.relative(CLAUDE_PROJECTS, file).split(path.sep).length === 2;
+  });
   if (!files.length) return blank('offline');
 
   const stats = [];
   for (const file of files) {
     try {
-      stats.push({ file, mtime: (await fsp.stat(file)).mtimeMs });
+      const st = await fsp.stat(file);
+      stats.push({ file, mtime: st.mtimeMs, size: st.size });
     } catch (err) { /* 文件刚被删 */ }
   }
   if (!stats.length) return blank('offline');
   stats.sort((a, b) => b.mtime - a.mtime);
 
-  // 只看最新的几个：日志目录可能积了几百个会话，全读没必要
+  // 不限前三个：元数据空会话再多也不能遮住真正的业务会话。
   let best = null;
-  for (const stat of stats.slice(0, 3)) {
-    const info = scanTail(await readTail(stat.file, 200, 120000));
+  const present = new Set(files);
+  for (const file of stateCache.keys()) if (!present.has(file)) stateCache.delete(file);
+  for (const stat of stats) {
+    let cached = stateCache.get(stat.file);
+    if (!cached || cached.mtime !== stat.mtime || cached.size !== stat.size) {
+      cached = { ...stat, info: scanTail(await readTail(stat.file, 200, 120000)) };
+      stateCache.set(stat.file, cached);
+    }
+    const info = cached.info;
     if (info && (!best || info.ts > best.ts)) best = info;
   }
   if (!best) {
@@ -320,25 +342,12 @@ async function stateSnapshot(now = new Date()) {
   }
 
   const age = now.getTime() - best.ts;
-  let state = 'idle';
-  if (age <= SCAN_WINDOW_MS) {
-    if (best.kind === 'assistant-tool') state = age < WORK_WINDOW_MS ? 'working' : 'idle';
-    else if (best.kind === 'assistant-text') {
-      if (age < SUCCESS_WINDOW_MS) state = 'success';
-      else if (age < WAITING_MS) state = 'waiting';
-      else state = 'idle';
-    } else if (best.kind === 'user') {
-      // 用户刚发完言 → 球在模型这边，正在生成
-      state = age < WAITING_MS ? 'thinking' : 'idle';
-    } else {
-      state = 'idle';
-    }
-  }
-
-  // 球不在模型手里、且安静够久 → 睡着（working / thinking 不睡）
-  if (['success', 'waiting', 'idle'].includes(state) && age >= SLEEP_MS) {
-    state = 'sleeping';
-  }
+  let state = best.state;
+  if (state === 'working' || state === 'thinking') {
+    if (age >= ACTIVE_STALE_MS) state = 'sleeping';
+  } else if (age >= SLEEP_MS) state = 'sleeping';
+  else if (state === 'success' && age >= WAITING_MS) state = 'idle';
+  else if (state === 'success' && age >= SUCCESS_WINDOW_MS) state = 'waiting';
   return blank(state, {
     cwd: best.cwd, sessionId: best.sessionId,
     lastActivity: Math.round(best.ts), activeSessions: 1,

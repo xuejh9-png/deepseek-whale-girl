@@ -1,3 +1,23 @@
+# 当前任务：2026-10-29 宠物同步修复与 Windows 1.0.1 发布
+
+用户授权：补齐 Mac/Windows Claude 工作状态，保留当前外观，更新云端并构建新版 Windows 安装包。
+基准：main `76646065163cfa81263ae08ef30185d8f086d0d7`，开始时工作区干净。
+范围：状态源、Windows HTTP 契约、跨工具动画选择、卡片命中区、Windows 中转站实扣接入、回归与发布。
+不在范围：重做素材、增加页面/交互、修改客户端/真实账单、重新设计架构。
+
+验收：
+- 两端按同一组 Claude 日志样例识别工作/思考/完成/错误，忽略无关元数据与子代理。
+- Windows /state 返回网页要求的 agent 对象，真实页面能随接口状态变化。
+- 窗口尺寸变化时卡片相对角色的位置保持不变，点击区域跟随。
+- Windows 优先显示 /v1/usage 的 actual_cost 与 remaining，Key 不进入安装包/日志，切换 Key 清旧缓存。
+- 数据回归、四组网页回归与 Windows 云端构建通过；发布 v1.0.1-win。
+
+验证及限制：见 docs/20261029_桌宠同步与Windows发布.md。
+
+---
+
+# 历史任务记录（以下范围及分支状态以各轮当时为准）
+
 # 当前任务：Issue #1
 
 需求：https://github.com/xuejh9-png/deepseek-whale-girl/issues/1

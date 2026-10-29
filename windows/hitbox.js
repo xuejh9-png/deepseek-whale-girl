@@ -22,6 +22,8 @@ const BODY_Y1 = 0.95;
 const SUMMARY_TOP = 17; // 与 web/pet.css 的 .pet-summary { top: 17px; height: 18px } 对应
 const SUMMARY_H = 18;
 const METER_H = 18;
+const STAGE_W = 160;
+const STAGE_H = 200;
 
 /**
  * @param {{x:number,y:number}} pt 屏幕坐标（DIP）
@@ -33,16 +35,19 @@ function hitTest(pt, bounds) {
   const ry = pt.y - bounds.y;
   if (rx < 0 || ry < 0 || rx > bounds.width || ry > bounds.height) return false;
 
-  const inBody = rx >= bounds.width * BODY_X0
-    && rx <= bounds.width * BODY_X1
-    && ry >= bounds.height * BODY_Y0
-    && ry <= bounds.height * BODY_Y1;
+  // 和 .pet-stage 一样：固定 160×200、底部居中，不能按变化后的窗口拉伸命中区。
+  const x = rx - (bounds.width - STAGE_W) / 2;
+  const y = ry - (bounds.height - STAGE_H);
+  const inBody = x >= STAGE_W * BODY_X0
+    && x <= STAGE_W * BODY_X1
+    && y >= STAGE_H * BODY_Y0
+    && y <= STAGE_H * BODY_Y1;
 
-  const inSummary = rx >= 2 && rx <= bounds.width - 2
-    && ry >= SUMMARY_TOP && ry <= SUMMARY_TOP + SUMMARY_H;
+  const inSummary = x >= 2 && x <= STAGE_W - 2
+    && y >= SUMMARY_TOP && y <= SUMMARY_TOP + SUMMARY_H;
 
-  const inMeter = rx >= 2 && rx <= bounds.width - 2
-    && ry >= bounds.height - METER_H && ry <= bounds.height;
+  const inMeter = x >= 2 && x <= STAGE_W - 2
+    && y >= STAGE_H - METER_H && y <= STAGE_H;
 
   return inBody || inSummary || inMeter;
 }

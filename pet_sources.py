@@ -26,6 +26,7 @@
 现有：
     WorkBuddySource  读 ~/.workbuddy/projects/*.jsonl + sessions/*.json
     CodexSource      读 ~/.codex/sessions/**/rollout-*.jsonl
+    ClaudeSource     读 ~/.claude/projects/*/*.jsonl
     NullSource       永远 idle（没有状态源时，宠物只做自己的 idle 动画）
 """
 import datetime as dt
@@ -517,7 +518,7 @@ class AutoSource(BaseSource):
             "success": 4, "idle": 5, "sleeping": 6, "offline": 7}
 
     def __init__(self):
-        self._sources = [WorkBuddySource(), CodexSource()]
+        self._sources = [WorkBuddySource(), CodexSource(), ClaudeSource()]
         self.tasks = []
         self.sources = []
 
@@ -587,11 +588,114 @@ def _clean_text(txt):
     return txt or None
 
 
+# ---------------------------------------------------------------- Claude Code
+
+class ClaudeSource(CodexSource):
+    """与 Windows 共用同一组业务事件验收样例；不把元数据当工作信号。"""
+    name = "claude"
+    title = "Claude Code"
+    ACTIVE_STALE_MS = 30 * 60 * 1000
+
+    def __init__(self, root=None):
+        self.root = root or os.path.expanduser(os.environ.get(
+            "PET_CLAUDE_DIR", os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude"), "projects")))
+        self._cache = {}
+
+    @staticmethod
+    def _ts_ms(value):
+        try:
+            stamp = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=dt.timezone.utc)
+            return int(stamp.timestamp() * 1000)
+        except (AttributeError, ValueError, TypeError):
+            return 0
+
+    @staticmethod
+    def _event_state(rec):
+        if rec.get("isSidechain"):
+            return None
+        msg = rec.get("message") or {}
+        content = msg.get("content")
+        parts = content if isinstance(content, list) else []
+        types = {p.get("type") for p in parts if isinstance(p, dict)}
+        kind = rec.get("type")
+        if kind == "assistant":
+            stop = msg.get("stop_reason")
+            if "tool_use" in types or stop == "tool_use":
+                return "working"
+            if stop in ("end_turn", "stop_sequence"):
+                return "success"
+            if "thinking" in types and "text" not in types:
+                return "thinking"
+            if "text" in types:
+                return "thinking" if "stop_reason" in msg and stop is None else "success"
+        if kind == "user":
+            if "tool_result" in types:
+                return "thinking"
+            if isinstance(content, str) and content.startswith("[Request interrupted by user"):
+                return "error"
+            if isinstance(content, str) or "text" in types:
+                return "thinking"
+        if kind == "api-request":
+            return "thinking"
+        if kind == "progress":
+            return "working"
+        if kind == "system" and rec.get("subtype") == "api_error":
+            return "error"
+        return None
+
+    def snapshot(self):
+        paths = glob.glob(os.path.join(self.root, "*", "*.jsonl"))
+        self._cache = {p: v for p, v in self._cache.items() if p in paths}
+        best = None
+        for path in paths:
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            key = (stat.st_mtime_ns, stat.st_size)
+            cached = self._cache.get(path)
+            if cached is None or cached[0] != key:
+                recs = self._tail(path, limit=200, bytes_=120000)
+                cwd = session_id = None
+                for rec in recs:
+                    cwd = rec.get("cwd") or cwd
+                    session_id = rec.get("sessionId") or session_id
+                info = None
+                for rec in reversed(recs):
+                    ts = self._ts_ms(rec.get("timestamp"))
+                    state = self._event_state(rec)
+                    if ts and state:
+                        info = (ts, state, cwd, session_id)
+                        break
+                self._cache[path] = (key, info)
+            info = self._cache[path][1]
+            if info and (best is None or info[0] > best[0]):
+                best = info
+        if best is None:
+            return blank("offline", source=self.name)
+        ts, state, cwd, session_id = best
+        age = now_ms() - ts
+        if state in ("working", "thinking"):
+            if age >= self.ACTIVE_STALE_MS:
+                state = "sleeping"
+        elif age >= SLEEP_MS:
+            state = "sleeping"
+        elif state == "success" and age >= WAITING_MS:
+            state = "idle"
+        elif state == "success" and age >= SUCCESS_WINDOW_MS:
+            state = "waiting"
+        return blank(state, source=self.name, cwd=cwd, sessionId=session_id,
+                     lastActivity=ts, activeSessions=1)
+
+
 # ---------------------------------------------------------------- 选择
 
 REGISTRY = {
     "workbuddy": WorkBuddySource,
     "codex": CodexSource,
+    "claude": ClaudeSource,
     "none": NullSource,
 }
 

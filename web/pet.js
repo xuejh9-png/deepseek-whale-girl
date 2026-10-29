@@ -93,7 +93,9 @@
      任务仍然参与状态选择：优先观察「正在干活」的那个，让动画跟对人。 */
   function showTask() {
     var selected = tasks.filter(function (t) { return t.id === selectedId; })[0];
-    var agent = selected || lastAgent;
+    // 跨工具切换时，旧的 WorkBuddy 任务不能盖住 Claude/Codex 的实时状态。
+    var agent = lastAgent.source && lastAgent.source !== 'workbuddy'
+      ? lastAgent : (selected || lastAgent);
     anim.setState(effectiveState(agent.state));
   }
 

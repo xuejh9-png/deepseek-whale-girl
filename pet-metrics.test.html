@@ -35,6 +35,8 @@ window.fetch=function(url){
  check('no drag or reset',!__sent.some(function(c){return ['dragBegin','reset','menu','clicked'].includes(c);}));
  __tasks[0]={id:'a',state:'success',label:'刚完成',cwd:'/demo/alpha'};__state={agent:__tasks[1],tasks:__tasks};
  await sleep(2700);check('selected task drives animation',el('pet').dataset.state==='success');
+ __state={agent:{source:'claude',state:'working'},tasks:__tasks};
+ await sleep(2200);check('claude overrides old workbuddy selection',el('pet').dataset.state==='working');
  __state={agent:__tasks[1],tasks:__tasks.slice(1)};
  await sleep(2700);check('expired task fallback',el('pet').dataset.state==='thinking');
  el('petTokens').click();check('workbuddy source',text('petTokens')==='WB 12.0万');
@@ -42,7 +44,9 @@ window.fetch=function(url){
  el('petTokens').click();check('missing claude unknown',text('petTokens')==='Claude —');
  el('petTokens').click();check('back to total',text('petTokens')==='今日 12.3万 Token*');
  check('usage refreshes',__usageCalls>=2);
- __usageTotal=210000;await sleep(3300);check('auto refresh without click',text('petTokens')==='今日 21.0万 Token*');
+ __usageTotal=210000;
+ for(var i=0;i<22&&text('petTokens')!=='今日 21.0万 Token*';i++)await sleep(250);
+ check('auto refresh without click',text('petTokens')==='今日 21.0万 Token*');
  __offline=true;await sleep(3300);check('offline state',el('pet').dataset.state==='offline');
  check('animation survives',Number(el('pet').dataset.ticks)>0);
  document.title='RESULT|PASS='+passed+'|FAIL='+fail.length+'|'+(fail.length?fail.join('|'):'ALL_OK');

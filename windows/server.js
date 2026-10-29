@@ -108,16 +108,21 @@ async function handle(req, res) {
 
   try {
     if (pathname === '/state' || pathname === '/api/state') {
-      return json(res, await stateSnapshot());
+      const agent = await stateSnapshot();
+      return json(res, {
+        ok: true, ts: Date.now(), apiVersion: 5,
+        agent, tasks: [], activeSessions: agent.activeSessions || 0,
+        source: 'auto', sourceTitle: '自动跟随当前活动的工具',
+      });
     }
     if (pathname === '/usage' || pathname === '/api/usage') {
       return json(res, await usageSnapshot());
     }
     if (pathname === '/claude-cost' || pathname === '/api/claude-cost') {
-      return json(res, await costSnapshot());
+      return json(res, require('./provider-usage').costSnapshot() || await costSnapshot());
     }
     if (pathname === '/health' || pathname === '/version') {
-      return json(res, { ok: true, version: 'win-1.0', source: 'claude' });
+      return json(res, { ok: true, version: require('./package.json').version, source: 'auto' });
     }
     return await serveStatic(pathname, res);
   } catch (err) {
@@ -128,6 +133,7 @@ async function handle(req, res) {
 
 /** 起服务，返回 { server, origin }；端口由系统分配，避免和别的程序抢 */
 function start() {
+  require('./provider-usage').snapshot();
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       handle(req, res).catch(() => notFound(res));

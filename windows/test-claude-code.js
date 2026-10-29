@@ -13,6 +13,9 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+// 本套只测日志和 HTTP 契约；费用接口在 test-provider-usage.js 用假请求单独测。
+require('./provider-usage').snapshot = () => null;
+require('./provider-usage').costSnapshot = () => null;
 
 let passed = 0;
 function ok(name, cond, got) {
@@ -149,6 +152,39 @@ function write(dir, lines, name = 'sess-demo.jsonl') {
     ok('mtime 很新但没有业务记录的文件被跳过', s.state === 'sleeping', s.state);
   }
 
+  console.log('Claude 跨平台共用场景：');
+  for (const fixture of require('../tests/claude-state-cases.json')) {
+    const dir = tmpdir();
+    const now = new Date();
+    try {
+      const rows = fixture.events.map(({ ago, ...row }) => JSON.stringify({
+        ...row, timestamp: new Date(now - ago * 1000).toISOString(),
+        cwd: '/demo', sessionId: 'claude-demo',
+      }));
+      write(dir, rows);
+      const cc = load(dir);
+      const got = await cc.stateSnapshot(now);
+      ok(fixture.name, got.state === fixture.state, got.state);
+      assert.deepStrictEqual(await cc.stateSnapshot(now), got);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+  {
+    const dir = tmpdir();
+    try {
+      write(dir, [assistant({ ago: 3, tool: true })], 'real.jsonl');
+      for (let i = 0; i < 5; i += 1) write(dir, [JSON.stringify({ type: 'attachment', timestamp: new Date().toISOString() })], `meta${i}.jsonl`);
+      const sub = path.join(dir, '-demo-project', 'subagents');
+      fs.mkdirSync(sub);
+      fs.writeFileSync(path.join(sub, 'agent.jsonl'), assistant({ ago: 0 }) + '\n');
+      const cc = load(dir);
+      ok('元数据/子代理不能遮住主会话', (await cc.stateSnapshot()).state === 'working');
+      write(dir, [assistant({ ago: 1 })], 'real.jsonl');
+      ok('追加后状态缓存失效', (await cc.stateSnapshot()).state === 'success');
+      fs.unlinkSync(path.join(dir, '-demo-project', 'real.jsonl'));
+      ok('删除会话清除缓存', (await cc.stateSnapshot()).state === 'offline');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+
   console.log('花费与去重：');
 
   // ---- 四条分量分别计价 ----
@@ -280,6 +316,34 @@ function write(dir, lines, name = 'sess-demo.jsonl') {
     ok('底部「今日 Token」那一行可点', at(80, 190) === true, at(80, 190));
     // 关键回归：macOS 的 5%~81% 照抄过来会让竖 90% 处穿透
     ok('Y 轴按顶部原点换算（竖 90% 仍是角色）', at(80, 180) === true, at(80, 180));
+  }
+
+  {
+    const { hitTest } = require('./hitbox');
+    const bounds = { x: -100, y: 500, width: 220, height: 260 };
+    ok('变高后的卡片仍可点击', hitTest({ x: -20, y: 585 }, bounds));
+    ok('旧卡片留白位置应穿透', !hitTest({ x: -20, y: 525 }, bounds));
+    ok('变宽后角色外侧穿透', !hitTest({ x: -90, y: 650 }, bounds));
+  }
+
+  console.log('HTTP 状态契约：');
+  {
+    const src = require('./sources');
+    const saved = src.stateSnapshot;
+    src.stateSnapshot = async () => ({ state: 'working', source: 'claude', activeSessions: 1 });
+    const { server, origin } = await require('./server').start();
+    try {
+      for (const route of ['/state', '/api/state']) {
+        const data = await (await fetch(origin + route)).json();
+        ok(route + ' 返回网页需要的 agent', data.agent.state === 'working' && data.agent.source === 'claude', data);
+        ok(route + ' 返回任务数组', Array.isArray(data.tasks), data);
+      }
+      const health = await (await fetch(origin + '/health')).json();
+      ok('健康检查反映安装包版本', health.version === require('./package.json').version, health);
+    } finally {
+      src.stateSnapshot = saved;
+      await new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); });
+    }
   }
 
   console.log(`\n  ${passed} 项通过${process.exitCode ? '，有失败' : ''}`);

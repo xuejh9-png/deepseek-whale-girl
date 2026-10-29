@@ -1,6 +1,6 @@
 {
   "name": "workbuddy-pet-windows",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "桌面宠物（Windows 11 / Electron）—— 读 Claude Code 本地日志，显示状态、今日 token 与累计花费",
   "main": "main.js",
@@ -8,7 +8,8 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node test-claude-code.js",
+    "test": "node test-claude-code.js && node test-provider-usage.js",
+    "test:ui": "electron test-ui.js",
     "dist": "electron-builder --win --x64",
     "dist:portable": "electron-builder --win portable --x64"
   },
@@ -27,6 +28,7 @@
       "preload.js",
       "server.js",
       "claude-code.js",
+      "provider-usage.js",
       "sources.js",
       "pricing.js",
       "hitbox.js",

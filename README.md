@@ -27,6 +27,13 @@
 
 ---
 
+## 1.0.1 更新（2026-10-29）
+
+保留造型与卡片配色，修复 Windows 卡片拖动偏移、两端 Claude 工作状态同步、
+Windows 状态接口与网页格式不一致。Windows 安装包现在也优先读取中转站真实扣费。
+下载 [Windows 最新安装包](https://github.com/xuejh9-png/deepseek-whale-girl/releases/latest)。
+配置与验证范围见 [更新说明](docs/20261029_桌宠同步与Windows发布.md)。
+
 ## 30 秒上手
 
 ### macOS
@@ -47,8 +54,8 @@
 | 只想看看她的动画 | 用浏览器打开 `pet.html`（只有动画，没有数据） |
 
 > Windows 版是 Electron，和 macOS 共用同一份前端与解析口径，详见
-> [`windows/README.md`](windows/README.md)。它只读 `%USERPROFILE%\.workbuddy`、
-> `\.codex`、`\.claude` 三处日志，不联网、不需要账号。
+> [`windows/README.md`](windows/README.md)。它读取 `%USERPROFILE%\.workbuddy`、
+> `\.codex`、`\.claude` 三处日志；配置了中转站 Key 时会联网查询该 Key 的实际扣费及余额。
 
 环境要求：**macOS 版**需要 Python 3（只用标准库），编译窗口那一步要
 `xcode-select --install`；**Windows 版**打包后无依赖，源码跑需要 Node 18+。

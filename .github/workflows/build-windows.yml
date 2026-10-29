@@ -32,7 +32,21 @@ jobs:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
 
       - name: 数据层回归（不需要 Electron）
-        run: node test-claude-code.js
+        run: npm test
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 跨平台状态与用量回归
+        working-directory: .
+        run: |
+          python pet_sources.test.py
+          python -m unittest test_usage
+          python provider_usage.test.py
+
+      - name: 网页动画与卡片布局回归
+        run: npm run test:ui
 
       - name: 打包 NSIS 安装包
         run: npm run dist

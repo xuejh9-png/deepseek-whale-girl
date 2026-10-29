@@ -356,7 +356,7 @@ def main():
     ap = argparse.ArgumentParser(description="WorkBuddy Pet 状态服务")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--source", default="auto",
-                    help="状态源：auto（默认）/ workbuddy / codex / none")
+                    help="状态源：auto（默认）/ workbuddy / codex / claude / none")
     ap.add_argument("--open", action="store_true", help="启动后打开页面")
     ap.add_argument("--once", action="store_true", help="只打印一次状态（调试）")
     ap.add_argument("--list", action="store_true", help="列出本机可用的状态源")

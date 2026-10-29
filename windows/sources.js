@@ -25,7 +25,7 @@ const WB_PROJECTS = path.join(os.homedir(), '.workbuddy', 'projects');
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions');
 const CLAUDE_PROJECTS = (process.env.PET_CLAUDE_DIR
   ? process.env.PET_CLAUDE_DIR.replace(/^~(?=$|[\\/])/, os.homedir())
-  : path.join(os.homedir(), '.claude', 'projects'));
+  : path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects'));
 
 const SOURCE_NAMES = ['workbuddy', 'codex', 'claude'];
 
@@ -412,17 +412,25 @@ async function usageSnapshot(now = new Date()) {
     codexToday(now).catch(() => ({ tokens: 0, calls: 0, models: [] })),
     claudeToday(now).catch(() => ({ tokens: 0, calls: 0, models: [] })),
   ]);
+  const provider = require('./provider-usage').snapshot();
+  if (provider && provider.fetchedDay === now.toLocaleDateString()
+      && provider.today.tokens !== null) {
+    results[2] = { tokens: provider.today.tokens, calls: provider.today.requests, models: [] };
+  }
   const bySource = {};
   SOURCE_NAMES.forEach((name, i) => {
     // 目录不存在时给空对象而不是 0：0 会和"真的没用"混淆
     bySource[name] = results[i].tokens > 0 ? { totalTokens: results[i].tokens } : {};
   });
+  const providerToday = provider && provider.fetchedDay === now.toLocaleDateString()
+    && provider.today.tokens !== null;
+  if (providerToday) bySource.claude = { totalTokens: provider.today.tokens, basis: 'provider' };
   const total = results.reduce((sum, r) => sum + r.tokens, 0);
 
   const missing = [];
   if (!fs.existsSync(WB_PROJECTS)) missing.push('WorkBuddy');
   if (!fs.existsSync(CODEX_SESSIONS)) missing.push('ChatGPT');
-  if (!fs.existsSync(CLAUDE_PROJECTS)) missing.push('Claude Code');
+  if (!fs.existsSync(CLAUDE_PROJECTS) && !providerToday) missing.push('Claude Code');
 
   return {
     today: {

@@ -1,0 +1,400 @@
+[
+  {
+    "name": "工具开始",
+    "events": [
+      {
+        "ago": 5,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use"
+            }
+          ]
+        }
+      }
+    ],
+    "state": "working"
+  },
+  {
+    "name": "工具执行30秒",
+    "events": [
+      {
+        "ago": 30,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use"
+            }
+          ]
+        }
+      }
+    ],
+    "state": "working"
+  },
+  {
+    "name": "工具执行5分钟",
+    "events": [
+      {
+        "ago": 300,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use"
+            }
+          ]
+        }
+      }
+    ],
+    "state": "working"
+  },
+  {
+    "name": "陈旧执行不永久占用",
+    "events": [
+      {
+        "ago": 1801,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use"
+            }
+          ]
+        }
+      }
+    ],
+    "state": "sleeping"
+  },
+  {
+    "name": "用户发言超过45秒",
+    "events": [
+      {
+        "ago": 90,
+        "type": "user",
+        "message": {
+          "content": "help"
+        }
+      }
+    ],
+    "state": "thinking"
+  },
+  {
+    "name": "工具结果等待模型",
+    "events": [
+      {
+        "ago": 50,
+        "type": "user",
+        "message": {
+          "content": [
+            {
+              "type": "tool_result"
+            }
+          ]
+        }
+      }
+    ],
+    "state": "thinking"
+  },
+  {
+    "name": "进度记录",
+    "events": [
+      {
+        "ago": 10,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use"
+            }
+          ]
+        }
+      },
+      {
+        "ago": 1,
+        "type": "progress",
+        "data": {
+          "type": "bash_progress"
+        }
+      }
+    ],
+    "state": "working"
+  },
+  {
+    "name": "模型刚发起请求",
+    "events": [
+      {
+        "ago": 1,
+        "type": "api-request"
+      }
+    ],
+    "state": "thinking"
+  },
+  {
+    "name": "思考片段",
+    "events": [
+      {
+        "ago": 1,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "thinking"
+            }
+          ],
+          "stop_reason": null
+        }
+      }
+    ],
+    "state": "thinking"
+  },
+  {
+    "name": "未完成文本片段",
+    "events": [
+      {
+        "ago": 1,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text"
+            }
+          ],
+          "stop_reason": null
+        }
+      }
+    ],
+    "state": "thinking"
+  },
+  {
+    "name": "工具前说明文字",
+    "events": [
+      {
+        "ago": 1,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text"
+            }
+          ],
+          "stop_reason": "tool_use"
+        }
+      }
+    ],
+    "state": "working"
+  },
+  {
+    "name": "最终回复",
+    "events": [
+      {
+        "ago": 1,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text"
+            }
+          ],
+          "stop_reason": "end_turn"
+        }
+      }
+    ],
+    "state": "success"
+  },
+  {
+    "name": "旧格式回复",
+    "events": [
+      {
+        "ago": 1,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text"
+            }
+          ]
+        }
+      }
+    ],
+    "state": "success"
+  },
+  {
+    "name": "回复40秒",
+    "events": [
+      {
+        "ago": 40,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text"
+            }
+          ],
+          "stop_reason": "end_turn"
+        }
+      }
+    ],
+    "state": "waiting"
+  },
+  {
+    "name": "回复50秒",
+    "events": [
+      {
+        "ago": 50,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text"
+            }
+          ],
+          "stop_reason": "end_turn"
+        }
+      }
+    ],
+    "state": "idle"
+  },
+  {
+    "name": "回复61秒",
+    "events": [
+      {
+        "ago": 61,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text"
+            }
+          ],
+          "stop_reason": "end_turn"
+        }
+      }
+    ],
+    "state": "sleeping"
+  },
+  {
+    "name": "完成后停止摘要",
+    "events": [
+      {
+        "ago": 3,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text"
+            }
+          ],
+          "stop_reason": "end_turn"
+        }
+      },
+      {
+        "ago": 1,
+        "type": "system",
+        "subtype": "stop_hook_summary"
+      }
+    ],
+    "state": "success"
+  },
+  {
+    "name": "附件不能抹掉执行",
+    "events": [
+      {
+        "ago": 5,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use"
+            }
+          ]
+        }
+      },
+      {
+        "ago": 1,
+        "type": "attachment"
+      }
+    ],
+    "state": "working"
+  },
+  {
+    "name": "只有元数据",
+    "events": [
+      {
+        "ago": 1,
+        "type": "attachment"
+      }
+    ],
+    "state": "offline"
+  },
+  {
+    "name": "API出错",
+    "events": [
+      {
+        "ago": 1,
+        "type": "system",
+        "subtype": "api_error"
+      }
+    ],
+    "state": "error"
+  },
+  {
+    "name": "错误后重试",
+    "events": [
+      {
+        "ago": 3,
+        "type": "system",
+        "subtype": "api_error"
+      },
+      {
+        "ago": 1,
+        "type": "api-request"
+      }
+    ],
+    "state": "thinking"
+  },
+  {
+    "name": "子代理不覆盖完成",
+    "events": [
+      {
+        "ago": 3,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text"
+            }
+          ],
+          "stop_reason": "end_turn"
+        }
+      },
+      {
+        "ago": 1,
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use"
+            }
+          ]
+        },
+        "isSidechain": true
+      }
+    ],
+    "state": "success"
+  },
+  {
+    "name": "用户中断",
+    "events": [
+      {
+        "ago": 1,
+        "type": "user",
+        "message": {
+          "content": "[Request interrupted by user]"
+        }
+      }
+    ],
+    "state": "error"
+  }
+]
